@@ -8,6 +8,9 @@ WPy64-*/
 WPy32-*/
 dist/**/python/
 
+# Zipped build outputs (the packaged distribution the user ships)
+*.zip
+
 # Claude Code personal/local settings (permissions allowlist)
 .claude/settings.local.json
 

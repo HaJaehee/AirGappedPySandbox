@@ -10,6 +10,7 @@ Run:  python server.py           (stdio transport, for AnythingLLM)
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -90,6 +91,88 @@ def execute_python_code(code: str) -> str:
     """
     config.ensure_workspace()
     before = snapshot()
+    result = KERNEL.execute(code, timeout=config.EXEC_TIMEOUT)
+    after = snapshot()
+    artifacts = diff(before, after, config.PROJECT_ROOT)
+    return _format_response(result, artifacts)
+
+
+def _resolve_workspace_file(file_path: str) -> tuple[Path | None, str | None]:
+    """Resolve a user-supplied path to a real file INSIDE the workspace.
+
+    Accepts absolute paths, project-relative paths (e.g. "./workspace/x.py"),
+    and plain names/relative paths interpreted against ./workspace. Enforces
+    isolation: the resolved file must live under the workspace directory.
+
+    Returns (path, None) on success or (None, error_message) on failure.
+    """
+    ws = config.ensure_workspace().resolve()
+    raw = Path(file_path.strip())
+    candidates: list[Path] = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append(config.PROJECT_ROOT / raw)  # e.g. ./workspace/x.py
+        candidates.append(ws / raw)                    # e.g. x.py or sub/x.py
+        candidates.append(ws / raw.name)               # bare filename fallback
+
+    for cand in candidates:
+        try:
+            resolved = cand.resolve()
+        except OSError:
+            continue
+        if not resolved.is_file():
+            continue
+        try:
+            resolved.relative_to(ws)
+        except ValueError:
+            return None, (
+                f"Refused: '{file_path}' resolves outside the workspace "
+                f"({resolved}). Only files under ./workspace can be run."
+            )
+        return resolved, None
+
+    return None, (
+        f"File not found in workspace: '{file_path}'. "
+        "Use list_workspace_files to see available files."
+    )
+
+
+@mcp.tool(
+    description=(
+        "Run an existing Python (.py) file from the ./workspace directory in the "
+        "STATEFUL kernel, as if executed as a script (its `if __name__ == "
+        "'__main__'` block runs). Returns the file's stdout, stderr, generated "
+        "file links, and status -- the same output shape as execute_python_code. "
+        "The file's top-level variables and functions are kept in memory "
+        "afterwards, so you can inspect them with a follow-up execute_python_code "
+        "call. The path must point inside ./workspace (e.g. 'sample.py' or "
+        "'./workspace/sample.py'). Remember: only printed output is captured, so "
+        "the file should print() the results you need.\n\n" + _RULES
+    )
+)
+def run_python_file(file_path: str) -> str:
+    """Execute a workspace .py file in the persistent kernel.
+
+    Args:
+        file_path: Path to a .py file inside ./workspace. Absolute paths and
+                   paths outside the workspace are rejected for isolation.
+    """
+    config.ensure_workspace()
+    resolved, err = _resolve_workspace_file(file_path)
+    if err is not None:
+        return f"execution_status: ERROR\n\n--- stderr ---\n{err}"
+
+    before = snapshot()
+    # Run the file as __main__ so script semantics apply, then merge its public
+    # names into the interactive namespace so state persists for later calls.
+    code = (
+        "import runpy as _runpy\n"
+        f"_result_ns = _runpy.run_path({str(resolved)!r}, run_name='__main__')\n"
+        "globals().update({_k: _v for _k, _v in _result_ns.items() "
+        "if not _k.startswith('__')})\n"
+        "del _runpy, _result_ns\n"
+    )
     result = KERNEL.execute(code, timeout=config.EXEC_TIMEOUT)
     after = snapshot()
     artifacts = diff(before, after, config.PROJECT_ROOT)

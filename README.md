@@ -58,6 +58,10 @@ IPython 커널  ← 40GB 포터블 Python으로 실행됨
 - **`execute_python_code(code: str)`** — 영속 커널에서 Python을 실행합니다.
   `execution_status`(`SUCCESS` / `ERROR` / `TIMEOUT`), 캡처된 stdout, stderr(정리된 트레이스백 포함),
   그리고 새로 생성된 workspace 파일에 대한 Markdown 링크를 반환합니다.
+- **`run_python_file(file_path: str)`** — `./workspace` 안의 `.py` 파일을 커널에서 스크립트로 실행합니다
+  (`if __name__ == '__main__'` 블록 실행). 반환 형식은 `execute_python_code`와 동일하며, 파일의 최상위
+  변수/함수는 실행 후에도 메모리에 남아 다음 호출에서 이어서 사용할 수 있습니다. 경로는 반드시 `./workspace`
+  안이어야 하며(격리), 바깥 경로는 거부됩니다.
 - **`list_workspace_files()`** — `./workspace`의 업로드/출력 파일을 크기와 형식과 함께 나열합니다.
 - **`reset_kernel_state()`** — 모든 메모리 내 상태를 지우기 위해 커널을 재시작합니다(workspace 파일은 유지).
   세션이 나쁜 상태에 빠졌을 때 사용합니다.
