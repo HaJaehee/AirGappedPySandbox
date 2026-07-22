@@ -1,0 +1,43 @@
+# Essential & Recommended packages for the Air-Gapped Kernel Portable Python
+# Download offline wheels using:
+#   pip download -r requirements-kernel.txt -d .\offline_wheels_kernel
+
+# Core Data Science & Math
+pandas
+numpy
+scipy
+sympy
+matplotlib
+seaborn
+
+# Excel, XML & Data Formats
+openpyxl
+xlsxwriter
+xlrd
+lxml
+xmltodict
+
+# Documents & Reporting
+pdfplumber
+pypdf
+PyMuPDF
+python-docx
+markdown
+beautifulsoup4
+python-pptx
+reportlab
+jinja2
+
+# Advanced Analytics, DB & High Performance
+plotly
+duckdb
+polars
+pyarrow
+
+# Vision & Data Cleaning Utilities
+Pillow
+rapidfuzz
+python-dateutil
+
+# Jupyter Kernel Backend
+ipykernel

@@ -1,0 +1,17 @@
+# Dependencies required by the MCP SERVER process itself (server.py).
+# These must be present in whatever interpreter runs server.py.
+#
+# The heavy data-science stack (pandas, numpy, sympy, pdfplumber, matplotlib,
+# openpyxl, lxml, python-docx, ...) is NOT listed here: it belongs to the
+# separate 40 GB portable Python that runs the kernel (see README, "Air-gapped
+# deployment"). If you run the server WITH the portable Python, add the three
+# packages below into that distribution as well.
+#
+# To stage for an air-gapped host while you still have internet:
+#   pip download -r requirements-server.txt -d ./offline_wheels
+# then on the offline host:
+#   pip install --no-index --find-links ./offline_wheels -r requirements-server.txt
+
+mcp>=1.2.0
+jupyter_client>=8.0
+ipykernel>=6.0

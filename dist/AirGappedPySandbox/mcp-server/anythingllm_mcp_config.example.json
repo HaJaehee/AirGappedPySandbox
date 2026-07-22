@@ -1,0 +1,16 @@
+{
+  "_comment": "AnythingLLM MCP 서버 설정. 아래 <BASE> 를 이 패키지의 압축 해제 위치로 바꾸세요(예: D:\\AirGappedPySandbox). 이 패키지 구조는 <BASE>\\WPy64-313130\\python\\python.exe (포터블 Python) 과 <BASE>\\mcp-server\\server.py (서버 코드) 입니다. AnythingLLM 의 MCP 설정 파일(Settings > Agent Skills > MCP Servers, 또는 ~/AnythingLLM/plugins/anythingllm_mcp_servers.json)에 붙여넣고 경로 수정 후 에이전트를 재시작하세요.",
+  "mcpServers": {
+    "air-gapped-python-sandbox": {
+      "command": "D:\\AirGappedPySandbox\\WPy64-313130\\python\\python.exe",
+      "args": [
+        "D:\\AirGappedPySandbox\\mcp-server\\server.py"
+      ],
+      "env": {
+        "SANDBOX_KERNEL_PYTHON": "D:\\AirGappedPySandbox\\WPy64-313130\\python\\python.exe",
+        "SANDBOX_WORKSPACE": "D:\\AirGappedPySandbox\\mcp-server\\workspace",
+        "SANDBOX_EXEC_TIMEOUT": "60"
+      }
+    }
+  }
+}

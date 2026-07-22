@@ -1,0 +1,16 @@
+{
+  "_comment": "AnythingLLM MCP server config. Copy this block into AnythingLLM's MCP servers file (Settings > Agent Skills > MCP Servers, or ~/AnythingLLM/plugins/anythingllm_mcp_servers.json). Adjust the two absolute paths for your machine, then restart the AnythingLLM agent.",
+  "mcpServers": {
+    "air-gapped-python-sandbox": {
+      "command": "C:\\path\\to\\portable-python\\python.exe",
+      "args": [
+        "C:\\Users\\loves\\AirGappedPySandbox\\server.py"
+      ],
+      "env": {
+        "SANDBOX_KERNEL_PYTHON": "C:\\path\\to\\portable-python\\python.exe",
+        "SANDBOX_WORKSPACE": "C:\\Users\\loves\\AirGappedPySandbox\\workspace",
+        "SANDBOX_EXEC_TIMEOUT": "60"
+      }
+    }
+  }
+}

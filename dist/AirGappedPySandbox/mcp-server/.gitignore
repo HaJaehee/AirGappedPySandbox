@@ -1,0 +1,11 @@
+# Dev-only virtualenv (server deps for local testing; not part of the deliverable)
+.devvenv/
+offline_wheels/
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime I/O — keep the folder, ignore its contents
+workspace/*
+!workspace/.gitkeep

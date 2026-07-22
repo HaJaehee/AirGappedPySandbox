@@ -1,0 +1,45 @@
+에어갭 Python 샌드박스 MCP 서버 — 포터블 배포 패키지
+=====================================================
+
+이 폴더는 그대로 ZIP으로 압축하여 에어갭(폐쇄망) 호스트로 옮길 수 있는 자체 완결형 패키지입니다.
+포터블 Python 본체(WinPython)까지 포함되어 있어, 대상 호스트에 별도 Python 설치가 필요 없습니다.
+
+폴더 구조
+---------
+AirGappedPySandbox\
+├─ PACKAGE_INFO.txt              ← 이 파일
+├─ BUILD_PORTABLE_PACKAGE.md     ← 포터블 패키지 제작 매뉴얼
+├─ WPy64-313130\                 ← 포터블 Python (WinPython 3.13, 모든 라이브러리 사전 설치됨)
+│   └─ python\python.exe             * 데이터 라이브러리 + mcp/jupyter_client/ipykernel 모두 포함
+└─ mcp-server\                   ← MCP 서버 코드 (매뉴얼의 mcp-server\ 에 해당)
+    ├─ server.py, kernel_manager.py, artifacts.py, config.py
+    ├─ check_environment.py, test_core.py
+    ├─ requirements-server.txt, requirements-kernel.txt
+    ├─ install_offline.ps1, start_server.ps1
+    ├─ anythingllm_mcp_config.example.json
+    ├─ README.md
+    ├─ offline_wheels\           ← 서버 의존성 오프라인 휠(3.11/3.12/3.13, win_amd64) — 재설치용 예비
+    └─ workspace\                ← 격리된 입출력 폴더 (업로드 + 생성 아티팩트)
+
+빠른 시작 (에어갭 호스트에서)
+-----------------------------
+아래 <BASE> = 압축 해제 위치 (예: D:\AirGappedPySandbox)
+
+1) 환경 검증 (RESULT: PASS 확인):
+     <BASE>\WPy64-313130\python\python.exe <BASE>\mcp-server\check_environment.py
+
+2) AnythingLLM에 등록:
+     mcp-server\anythingllm_mcp_config.example.json 의 경로(<BASE>)를 실제 값으로 수정하여
+     AnythingLLM MCP 설정에 추가한 뒤 에이전트 재시작.
+     - command / SANDBOX_KERNEL_PYTHON : <BASE>\WPy64-313130\python\python.exe
+     - args (server.py)                : <BASE>\mcp-server\server.py
+     - SANDBOX_WORKSPACE               : <BASE>\mcp-server\workspace
+
+3) 워크스페이스 에이전트 스킬에서 도구 활성화 → 수학/문서분석/차트 테스트.
+
+참고
+----
+- WPy64-313130 에는 이미 mcp/jupyter_client/ipykernel 및 모든 데이터 라이브러리가 설치되어 있으므로
+  install_offline.ps1 은 실행할 필요가 없습니다(다른 Python 에 서버 의존성을 재설치할 때만 사용).
+- 사용자가 파일을 분석시키려면 대상 파일(PDF/Excel/CSV 등)을 mcp-server\workspace\ 에 넣으세요.
+- 자세한 내용은 mcp-server\README.md, 제작 과정은 BUILD_PORTABLE_PACKAGE.md 참고.
