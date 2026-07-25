@@ -28,6 +28,9 @@ from artifacts import diff, snapshot
 from kernel_manager import POOL
 
 mcp = FastMCP("air-gapped-python-sandbox")
+# Report the project version in the MCP handshake (serverInfo.version). FastMCP
+# has no version kwarg, so set it on the underlying low-level server.
+mcp._mcp_server.version = config.VERSION
 
 
 # --- shared guidance injected into every tool description --------------------

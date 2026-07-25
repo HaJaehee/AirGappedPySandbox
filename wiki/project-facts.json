@@ -4,6 +4,8 @@
   "as_of_commit": "229fb8a",
   "project": {
     "name": "Air-Gapped Python Sandbox MCP Server",
+    "version": "0.3.0",
+    "version_source_of_truth": "config.VERSION (reported over MCP serverInfo.version; mirrored in README.md version history)",
     "goal": "Stateful offline Python code-interpreter exposed to an LLM over MCP, backed by a portable Python, for math/data/charts/document-parsing with no internet and no pip.",
     "status": "complete and verified; work is packaging/hardening/docs",
     "client": "AnythingLLM agent (MCP over stdio)",

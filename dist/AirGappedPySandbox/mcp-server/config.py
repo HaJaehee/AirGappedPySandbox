@@ -32,6 +32,10 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+# Single source of truth for the project version. Keep in sync with the version
+# history table in README.md. The server reports this over MCP (serverInfo).
+VERSION: str = "0.3.0"
+
 # Project root = directory containing this file. The kernel's working directory
 # is set here so that the "./workspace/..." relative paths used by the LLM
 # resolve consistently regardless of where the server was launched from.
