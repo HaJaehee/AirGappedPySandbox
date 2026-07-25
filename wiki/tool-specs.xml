@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Structured catalog of the MCP tool interfaces exposed by server.py.
+  Companion to 03-mcp-tools.md (prose) and project-facts.json (facts).
+  All tools return a single text block; "return value" = printed stdout + extras,
+  never a Python object.
+-->
+<mcpServer name="air-gapped-python-sandbox" transport="stdio" asOfCommit="229fb8a">
+
+  <commonResponseFormat>
+    <banner name="active_namespace" desc="top line 'active_namespace: ns-XXXX' + note; a trailing '[reminder] your namespace ...' is appended too"/>
+    <field name="execution_status" values="SUCCESS|ERROR|TIMEOUT"/>
+    <section name="stdout" desc="everything print()ed"/>
+    <section name="last expression" desc="repr of last expression; shown ONLY when stdout is empty"/>
+    <section name="stderr" desc="cleaned traceback/warnings, ANSI stripped"/>
+    <section name="artifacts" desc="Markdown links to new/changed ./workspace files; images as ![](), else []()"/>
+  </commonResponseFormat>
+
+  <namespaceParam desc="Mandatory on execution tools. Per-conversation isolation; see 09-namespace-routing.md.">
+    <rule>Pass 'new' (or empty) on the first call to mint a fresh ns-XXXX.</rule>
+    <rule>Reuse the exact active_namespace value returned, on every later call.</rule>
+    <rule>id source priority: MCP _meta conversation id (future) > this arg > minted.</rule>
+    <injected name="ctx" type="Context" desc="FastMCP-injected, hidden from schema; carries future _meta hook"/>
+  </namespaceParam>
+
+  <tool name="execute_python_code" stateful="true">
+    <description>Run Python in the namespace's stateful IPython kernel. Variables/imports persist across calls within that namespace.</description>
+    <input>
+      <param name="code" type="string" required="true">Python source to execute. Use print() to return values; save plots to ./workspace.</param>
+      <param name="namespace" type="string" required="true">Conversation namespace; see namespaceParam.</param>
+    </input>
+    <output type="text" format="commonResponseFormat"/>
+    <timeout envVar="SANDBOX_EXEC_TIMEOUT" defaultSeconds="60"/>
+  </tool>
+
+  <tool name="run_python_file" stateful="true" addedIn="229fb8a">
+    <description>Run an existing .py file from ./workspace as a script (runpy.run_path with run_name='__main__'); its __main__ block runs. The file's top-level names are merged into the kernel namespace afterwards.</description>
+    <input>
+      <param name="file_path" type="string" required="true">Path to a .py file INSIDE ./workspace. Accepts bare name, ./workspace/ prefix, or absolute path within the workspace.</param>
+      <param name="namespace" type="string" required="true">Conversation namespace; see namespaceParam.</param>
+    </input>
+    <output type="text" format="commonResponseFormat"/>
+    <isolation>
+      <rule>Resolved via _resolve_workspace_file(); must land inside ./workspace.</rule>
+      <error condition="path outside workspace">execution_status: ERROR, message contains "outside the workspace"</error>
+      <error condition="file missing">execution_status: ERROR, message contains "not found"</error>
+    </isolation>
+  </tool>
+
+  <tool name="list_workspace_files" stateful="false">
+    <description>List every file under ./workspace with size and extension, or a note if empty.</description>
+    <input/>
+    <output type="text" desc="human/LLM-readable listing"/>
+  </tool>
+
+  <tool name="reset_kernel_state" stateful="false" destructive="memory-only">
+    <description>Restart ONE namespace's kernel, clearing that conversation's in-memory state. Workspace files kept; other namespaces untouched.</description>
+    <input>
+      <param name="namespace" type="string" required="true">The active_namespace to reset.</param>
+    </input>
+    <output type="text" desc="restart confirmation"/>
+  </tool>
+
+  <embeddedRules appliesTo="execute_python_code,run_python_file">
+    <rule id="1" name="air-gap">No pip/apt/conda, no network. All libraries pre-installed.</rule>
+    <rule id="2" name="print">Only print()ed output is returned.</rule>
+    <rule id="3" name="plots-reports">matplotlib savefig+close (no show); plotly write_html; save pptx/pdf/docx/html into ./workspace.</rule>
+    <rule id="4" name="paths">Read/write under ./workspace (relative paths).</rule>
+    <rule id="5" name="self-correct">On stderr error, fix and retry.</rule>
+  </embeddedRules>
+
+</mcpServer>

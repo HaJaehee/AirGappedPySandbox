@@ -1,0 +1,112 @@
+{
+  "schema": "airgapped-pysandbox/handoff-facts@1",
+  "generated_for": "next AI session handoff",
+  "as_of_commit": "229fb8a",
+  "project": {
+    "name": "Air-Gapped Python Sandbox MCP Server",
+    "goal": "Stateful offline Python code-interpreter exposed to an LLM over MCP, backed by a portable Python, for math/data/charts/document-parsing with no internet and no pip.",
+    "status": "complete and verified; work is packaging/hardening/docs",
+    "client": "AnythingLLM agent (MCP over stdio)",
+    "spec_file": "CLAUDE.md",
+    "user_docs_language": "Korean",
+    "wiki_language": "English"
+  },
+  "paths": {
+    "canonical_repo_root": "D:\\AirGappedPySandbox",
+    "bash_pwd": "/d/AirGappedPySandbox",
+    "disconnected_junction": "C:\\Users\\loves\\AirGappedPySandbox",
+    "package_dir": "dist/AirGappedPySandbox",
+    "portable_python_exe": "dist/AirGappedPySandbox/WPy64-313130/python/python.exe",
+    "server_entry": "server.py",
+    "package_server_entry": "dist/AirGappedPySandbox/mcp-server/server.py",
+    "dev_venv_python": ".devvenv/Scripts/python.exe",
+    "zip_output": "dist/AirGappedPySandbox.zip"
+  },
+  "source_duplication": {
+    "note": "Every server module exists at repo root AND under dist/AirGappedPySandbox/mcp-server/. They must stay identical.",
+    "rule": "edit repo-root first, then copy into the package"
+  },
+  "interpreters": {
+    "kernel_and_shipped_runtime": {"path_key": "portable_python_exe", "python": "3.13.13", "distribution": "WinPython WPy64-313130", "has_all_libs": true, "has_server_deps": true},
+    "dev_venv": {"path_key": "dev_venv_python", "python": "3.12", "purpose": "fast local testing"},
+    "system_python": {"python": "3.12.10"}
+  },
+  "git": {
+    "branch": "main",
+    "remote": null,
+    "user": "J.Ha",
+    "commits": [
+      {"sha": "229fb8a", "subject": "Add run_python_file tool to execute a workspace .py file directly"},
+      {"sha": "b96d962", "subject": "Add stateful air-gapped Python sandbox MCP server + portable package"},
+      {"sha": "198af66", "subject": "Initial commit"}
+    ],
+    "known_unstaged_note": "dist/AirGappedPySandbox/mcp-server/README.md sometimes shows modified due to CRLF; harmless",
+    "wiki_tracked": false
+  },
+  "modules": {
+    "config.py": "settings + env overrides; PROJECT_ROOT, WORKSPACE_DIR, KERNEL_PYTHON, timeouts, ensure_workspace()",
+    "kernel_manager.py": "StatefulKernel (cross-interpreter launch; timeout->interrupt->restart) + KernelPool/POOL (per-namespace kernels, warm reserve, idle eviction, LRU cap); KERNEL kept for test_core only",
+    "artifacts.py": "snapshot(), diff(), Artifact.to_markdown()",
+    "server.py": "FastMCP tools + _RULES + _format_response + _resolve_workspace_file + main()",
+    "check_environment.py": "pre-flight package probe + kernel boot; RESULT: PASS/FAIL",
+    "test_core.py": "14 kernel/artifact smoke checks, no MCP import"
+  },
+  "mcp_tools": [
+    {"name": "execute_python_code", "input": {"code": "str", "namespace": "str (required; 'new' to mint)"}, "output": "namespace banner + text block (status/stdout/last-expr/stderr/artifacts) + reminder", "stateful": true, "hidden_param": "ctx: Context (FastMCP-injected, future _meta hook)"},
+    {"name": "run_python_file", "input": {"file_path": "str", "namespace": "str (required)"}, "output": "same as execute_python_code", "runs_as": "__main__", "isolation": "path must resolve inside ./workspace", "added_in": "229fb8a"},
+    {"name": "list_workspace_files", "input": {}, "output": "text listing of ./workspace (shared across namespaces)"},
+    {"name": "reset_kernel_state", "input": {"namespace": "str (required)"}, "output": "restarts ONE namespace kernel; clears its memory, keeps files, other namespaces untouched"}
+  ],
+  "namespace_routing": {
+    "status": "implemented, verified",
+    "why": "AnythingLLM shares one MCP process across all conversations; one kernel meant cross-conversation variable-name collisions",
+    "mandatory": true,
+    "id_source_priority": ["_meta conversation id (future; None today)", "explicit namespace arg", "server-minted ns-XXXX on 'new'"],
+    "reinforcement": "namespace is a required param; every response echoes 'active_namespace: ns-XXXX' banner + trailing reminder",
+    "execution": "one StatefulKernel per namespace via kernel_manager.KernelPool (singleton POOL)",
+    "warm_reserve": "POOL.prewarm() boots one spare; new namespace adopts it (first call ~0.06s); maintainer replenishes",
+    "idle_eviction": "maintainer sweeps every 30s, evicts namespaces idle > NS_IDLE_TIMEOUT",
+    "lru_cap": "MAX_NAMESPACES live kernels max; LRU evicted over cap",
+    "workspace": "files SHARED across namespaces (uploads work); only in-memory state isolated",
+    "known_limits": ["continuity breaks if model drops the tag after context truncation", "weak target LLM copies tags less reliably", "real fix = AnythingLLM sending conversation id via _meta (hook ready)"]
+  },
+  "env_vars": {
+    "SANDBOX_KERNEL_PYTHON": {"default": "sys.executable", "meaning": "interpreter that runs the kernel"},
+    "SANDBOX_WORKSPACE": {"default": "PROJECT_ROOT/workspace"},
+    "SANDBOX_EXEC_TIMEOUT": {"default": 60, "unit": "seconds"},
+    "SANDBOX_STARTUP_TIMEOUT": {"default": 60, "unit": "seconds"},
+    "SANDBOX_MAX_STREAM_CHARS": {"default": 20000, "meaning": "cap on returned stdout/stderr; 0=unlimited"},
+    "SANDBOX_NS_IDLE_TIMEOUT": {"default": 1800, "unit": "seconds", "meaning": "evict idle namespace kernels after this"},
+    "SANDBOX_MAX_NAMESPACES": {"default": 8, "meaning": "max simultaneous namespace kernels; LRU eviction over cap"},
+    "SANDBOX_LAZY_START": {"default": null, "meaning": "if truthy, skip warm-reserve prewarm"}
+  },
+  "requirements": {
+    "server": ["mcp>=1.2.0", "jupyter_client>=8.0", "ipykernel>=6.0"],
+    "kernel": ["pandas", "numpy", "scipy", "sympy", "matplotlib", "seaborn", "openpyxl", "xlsxwriter", "xlrd", "lxml", "xmltodict", "pdfplumber", "pypdf", "PyMuPDF", "python-docx", "markdown", "beautifulsoup4", "python-pptx", "reportlab", "jinja2", "plotly", "duckdb", "polars", "pyarrow", "Pillow", "rapidfuzz", "python-dateutil", "ipykernel"],
+    "offline_wheels": {"dir": "dist/AirGappedPySandbox/mcp-server/offline_wheels", "count": 69, "python_versions": ["3.11", "3.12", "3.13"], "platform": "win_amd64"}
+  },
+  "verification": {
+    "test_core": {"result": "14/14 PASS", "runtime": "WinPython 3.13"},
+    "check_environment": {"result": "PASS"},
+    "run_python_file": {"result": "8/8 PASS", "committed": false},
+    "offline_capability": {"result": "PASS", "libs_exercised": ["sympy", "pandas", "openpyxl", "matplotlib", "reportlab", "pdfplumber", "PyMuPDF(fitz)", "python-docx", "polars", "duckdb", "numpy", "scipy"]},
+    "warm_start_seconds": 2.5,
+    "package_size_gb": 3.47,
+    "package_size_note": "spec's 40GB was an overestimate; ~3-4GB is the real functional footprint and is sufficient"
+  },
+  "gitignore_excludes": [".devvenv/", "offline_wheels/", "WPy64-*/", "WPy32-*/", "dist/**/python/", "*.zip", "__pycache__/", "workspace/* (except .gitkeep)", ".claude/settings.local.json"],
+  "gotchas": [
+    "Windows blocking time.sleep is not interruptible -> timeout restarts the kernel (state_reset=True)",
+    "kernel uses loopback 127.0.0.1 ZeroMQ; fine air-gapped; TCP warning is local",
+    "console codepage cp949; keep diagnostic prints ASCII",
+    "PyMuPDF import name is fitz",
+    "C: path was a junction to D:, now disconnected; use D:",
+    "matplotlib builds font cache locally on first chart (no network)"
+  ],
+  "open_questions": [
+    "final list of libraries to bundle (must be added online, cannot add on air-gapped host)",
+    "confirm host arch is win_amd64",
+    "whether dist/ code copies should be committed vs build-generated",
+    "whether to commit wiki/ and the namespace-routing change (pending user OK)"
+  ]
+}
