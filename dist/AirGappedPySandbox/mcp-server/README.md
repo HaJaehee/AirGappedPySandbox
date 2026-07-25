@@ -1,5 +1,7 @@
 # 에어갭 Python 샌드박스 — MCP 서버
 
+**버전: v0.3.0** ([변경 이력](#버전-이력))
+
 MCP(Model Context Protocol)를 통해 LLM에 노출되는 **상태 유지형(stateful) 오프라인 Python 코드 인터프리터**입니다.
 사내/기업용 LLM(AnythingLLM 에이전트 경유)이 수학 계산, 데이터 분석, 차트 생성, 문서 파싱을 위해
 실제 Python 코드를 실행할 수 있게 해줍니다 — **인터넷 연결 없이, `pip install` 없이**, 미리 패키징된
@@ -55,16 +57,24 @@ IPython 커널  ← 40GB 포터블 Python으로 실행됨
 
 ## LLM에 노출되는 MCP 도구
 
-- **`execute_python_code(code: str)`** — 영속 커널에서 Python을 실행합니다.
-  `execution_status`(`SUCCESS` / `ERROR` / `TIMEOUT`), 캡처된 stdout, stderr(정리된 트레이스백 포함),
-  그리고 새로 생성된 workspace 파일에 대한 Markdown 링크를 반환합니다.
-- **`run_python_file(file_path: str)`** — `./workspace` 안의 `.py` 파일을 커널에서 스크립트로 실행합니다
-  (`if __name__ == '__main__'` 블록 실행). 반환 형식은 `execute_python_code`와 동일하며, 파일의 최상위
-  변수/함수는 실행 후에도 메모리에 남아 다음 호출에서 이어서 사용할 수 있습니다. 경로는 반드시 `./workspace`
-  안이어야 하며(격리), 바깥 경로는 거부됩니다.
-- **`list_workspace_files()`** — `./workspace`의 업로드/출력 파일을 크기와 형식과 함께 나열합니다.
-- **`reset_kernel_state()`** — 모든 메모리 내 상태를 지우기 위해 커널을 재시작합니다(workspace 파일은 유지).
-  세션이 나쁜 상태에 빠졌을 때 사용합니다.
+- **`execute_python_code(code: str, namespace: str)`** — 해당 네임스페이스의 영속 커널에서 Python을
+  실행합니다. `execution_status`(`SUCCESS` / `ERROR` / `TIMEOUT`), 캡처된 stdout, stderr(정리된 트레이스백
+  포함), 새로 생성된 workspace 파일 Markdown 링크를 반환합니다. 응답 맨 위에 `active_namespace: ns-XXXX`가
+  표시됩니다.
+- **`run_python_file(file_path: str, namespace: str)`** — `./workspace` 안의 `.py` 파일을 해당 네임스페이스
+  커널에서 스크립트로 실행합니다(`if __name__ == '__main__'` 블록 실행). 반환 형식은 `execute_python_code`와
+  동일하며, 파일의 최상위 변수/함수는 실행 후에도 메모리에 남습니다. 경로는 반드시 `./workspace` 안이어야
+  하며(격리), 바깥 경로는 거부됩니다.
+- **`list_workspace_files()`** — `./workspace`의 업로드/출력 파일을 크기와 형식과 함께 나열합니다(모든
+  네임스페이스가 공유).
+- **`reset_kernel_state(namespace: str)`** — 지정한 네임스페이스의 커널만 재시작하여 그 대화의 메모리 상태를
+  지웁니다(workspace 파일과 다른 네임스페이스는 유지).
+
+> **네임스페이스(대화별 격리):** 하나의 MCP 서버 프로세스를 여러 AnythingLLM 대화가 공유하므로, 각 실행은
+> `namespace`로 분리된 별도 커널에서 돌아갑니다. LLM은 첫 호출에 `namespace="new"`를 주고, 응답의
+> `active_namespace: ns-XXXX`를 이후 호출마다 그대로 넘겨 자기 변수/데이터프레임을 유지합니다. 유휴
+> 네임스페이스 커널은 `SANDBOX_NS_IDLE_TIMEOUT`(기본 30분) 후 회수되고, 동시 커널 수는
+> `SANDBOX_MAX_NAMESPACES`(기본 8)로 제한됩니다. 자세한 배경은 `wiki/09-namespace-routing.md` 참고.
 
 도구 설명(description)에는 LLM이 지켜야 할 운영 규칙이 내장되어 있습니다(no `pip`, 항상 `print()`,
 플롯은 `plt.show()`가 아니라 `plt.savefig()`로 저장, `./workspace/` 상대 경로 사용, 오류 시 자가 수정).
@@ -147,7 +157,9 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 | `SANDBOX_EXEC_TIMEOUT` | `60` | 호출당 실행 타임아웃(초). |
 | `SANDBOX_STARTUP_TIMEOUT` | `60` | 커널 부팅 타임아웃(초). |
 | `SANDBOX_MAX_STREAM_CHARS` | `20000` | 반환 stdout/stderr 상한(0 = 무제한). |
-| `SANDBOX_LAZY_START` | 미설정 | 참(truthy)이면 시작 시 커널을 미리 예열하지 않음. |
+| `SANDBOX_NS_IDLE_TIMEOUT` | `1800` | 유휴 네임스페이스 커널 회수까지의 시간(초). |
+| `SANDBOX_MAX_NAMESPACES` | `8` | 동시 유지 네임스페이스 커널 수 상한(초과 시 LRU 회수). |
+| `SANDBOX_LAZY_START` | 미설정 | 참(truthy)이면 시작 시 예열용 커널을 미리 부팅하지 않음. |
 
 ## 사용자가 샌드박스에 파일을 넣는 방법
 
@@ -177,3 +189,16 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 권한으로 실행됩니다. 여기서의 완화책은 workspace 상대 경로 입출력, 자동 복구가 있는 실행 타임아웃,
 출력 크기 제한, 그리고 에어갭 그 자체(대상 환경에 네트워크 없음)입니다. 더 강한 격리가 필요하다면 서버
 전체를 컨테이너나 제한된 OS 사용자 계정 안에서 실행하세요.
+
+---
+
+## 버전 이력
+
+[유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따릅니다. 1.0 이전(0.x)이라 아직 세부 동작은
+바뀔 수 있습니다.
+
+| 버전 | 변경 내용 |
+|------|-----------|
+| **v0.3.0** | 대화별 **네임스페이스 라우팅**(필수 `namespace` 인자) 도입 — 한 서버 프로세스를 공유하는 여러 AnythingLLM 대화의 변수 충돌 방지. 네임스페이스별 커널 풀(웜 리저브·유휴 회수·LRU 상한), 응답 배너 되울림, 미래 `_meta` 대화 id 훅. |
+| v0.2.0 | `run_python_file` 도구 추가(워크스페이스 `.py` 파일을 스크립트로 실행). |
+| v0.1.0 | 최초 기능 릴리스: 상태 유지형 IPython 커널 코어, 아티팩트 인터셉터, FastMCP 도구, 포터블 패키지(WinPython 3.13) + 오프라인 검증. |

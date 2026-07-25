@@ -17,6 +17,7 @@ reported to the caller.
 from __future__ import annotations
 
 import queue
+import random
 import re
 import threading
 import time
@@ -314,6 +315,166 @@ class StatefulKernel:
         return self._km is not None and self._km.is_alive()
 
 
-# Process-wide singleton. The MCP server keeps exactly one kernel for the
-# lifetime of the session so state persists across tool calls.
+# Kept for the standalone smoke tests (test_core.py), which exercise a single
+# kernel directly. The MCP server itself routes through POOL, below.
 KERNEL = StatefulKernel()
+
+
+# --- Per-namespace kernel pool ----------------------------------------------
+
+_MAINT_INTERVAL = 30  # seconds between eviction/replenish sweeps
+_NS_ALPHABET = "0123456789abcdef"
+
+
+def mint_namespace_id() -> str:
+    """Short, high-enough-entropy id a (possibly weak) LLM can copy back."""
+    return "ns-" + "".join(random.choices(_NS_ALPHABET, k=4))
+
+
+class KernelPool:
+    """Manages one StatefulKernel per namespace id.
+
+    Each namespace = an isolated set of variables/imports (its own kernel), so
+    concurrent AnythingLLM conversations cannot collide. Idle kernels are
+    evicted after ``config.NS_IDLE_TIMEOUT`` and the pool is capped at
+    ``config.MAX_NAMESPACES`` (LRU eviction). A single pre-warmed "reserve"
+    kernel is kept so opening a new namespace is usually instant.
+    """
+
+    def __init__(self) -> None:
+        self._kernels: dict[str, StatefulKernel] = {}
+        self._last_used: dict[str, float] = {}
+        self._reserve: StatefulKernel | None = None
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._maintainer: threading.Thread | None = None
+
+    # -- startup -----------------------------------------------------------
+
+    def prewarm(self) -> None:
+        """Boot one reserve kernel (surfaces config errors early) and start the
+        background maintainer. Safe to call once at server startup."""
+        spare = StatefulKernel()
+        spare.start()  # may raise -> caller logs and continues lazily
+        with self._lock:
+            if self._reserve is None:
+                self._reserve = spare
+            else:
+                spare.shutdown()
+        self._ensure_maintainer()
+
+    def _ensure_maintainer(self) -> None:
+        if self._maintainer is None or not self._maintainer.is_alive():
+            self._stop.clear()
+            self._maintainer = threading.Thread(
+                target=self._maintain_loop, name="kernel-pool-maintainer", daemon=True
+            )
+            self._maintainer.start()
+
+    # -- routing -----------------------------------------------------------
+
+    def mint(self) -> str:
+        with self._lock:
+            for _ in range(10000):
+                nsid = mint_namespace_id()
+                if nsid not in self._kernels:
+                    return nsid
+        return "ns-" + "".join(random.choices(_NS_ALPHABET + "ghijklmnop", k=8))
+
+    def get(self, ns: str) -> StatefulKernel:
+        """Return the kernel for ``ns``, creating it (adopting the reserve when
+        available) if needed."""
+        with self._lock:
+            kernel = self._kernels.get(ns)
+            if kernel is None or not kernel.is_alive():
+                self._evict_over_cap_locked()
+                kernel = self._acquire_kernel_locked()
+                self._kernels[ns] = kernel
+            self._last_used[ns] = time.monotonic()
+            self._ensure_maintainer()
+            return kernel
+
+    def reset(self, ns: str) -> bool:
+        """Restart a namespace's kernel (clears its variables). Returns True if
+        the namespace existed."""
+        with self._lock:
+            kernel = self._kernels.get(ns)
+            if kernel is None:
+                return False
+            kernel.restart()
+            self._last_used[ns] = time.monotonic()
+            return True
+
+    def active_namespaces(self) -> list[str]:
+        with self._lock:
+            return sorted(self._kernels)
+
+    # -- internals ---------------------------------------------------------
+
+    def _acquire_kernel_locked(self) -> StatefulKernel:
+        # Adopt the pre-warmed reserve if it is ready (instant); otherwise boot
+        # a fresh kernel now (blocks this call ~2.5s -- acceptable for a new
+        # conversation on a single-user host).
+        if self._reserve is not None and self._reserve.is_alive():
+            kernel = self._reserve
+            self._reserve = None
+            return kernel
+        kernel = StatefulKernel()
+        kernel.start()
+        return kernel
+
+    def _evict_over_cap_locked(self) -> None:
+        while len(self._kernels) >= config.MAX_NAMESPACES and self._last_used:
+            lru = min(self._last_used, key=self._last_used.get)
+            self._shutdown_ns_locked(lru)
+
+    def _shutdown_ns_locked(self, ns: str) -> None:
+        kernel = self._kernels.pop(ns, None)
+        self._last_used.pop(ns, None)
+        if kernel is not None:
+            try:
+                kernel.shutdown()
+            except Exception:
+                pass
+
+    def _maintain_loop(self) -> None:
+        while not self._stop.wait(_MAINT_INTERVAL):
+            # 1. Evict idle namespaces (quick, under lock).
+            with self._lock:
+                now = time.monotonic()
+                idle = [
+                    ns for ns, t in self._last_used.items()
+                    if now - t > config.NS_IDLE_TIMEOUT
+                ]
+                for ns in idle:
+                    self._shutdown_ns_locked(ns)
+                need_reserve = self._reserve is None or not self._reserve.is_alive()
+            # 2. Replenish the reserve OUTSIDE the lock (booting is slow).
+            if need_reserve and not self._stop.is_set():
+                try:
+                    spare = StatefulKernel()
+                    spare.start()
+                except Exception:
+                    spare = None
+                if spare is not None:
+                    with self._lock:
+                        if self._reserve is None or not self._reserve.is_alive():
+                            self._reserve = spare
+                        else:
+                            spare.shutdown()
+
+    def shutdown_all(self) -> None:
+        self._stop.set()
+        with self._lock:
+            for ns in list(self._kernels):
+                self._shutdown_ns_locked(ns)
+            if self._reserve is not None:
+                try:
+                    self._reserve.shutdown()
+                except Exception:
+                    pass
+                self._reserve = None
+
+
+# Process-wide pool the MCP server routes every execution through.
+POOL = KernelPool()

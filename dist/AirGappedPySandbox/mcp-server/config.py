@@ -56,6 +56,16 @@ STARTUP_TIMEOUT: int = _env_int("SANDBOX_STARTUP_TIMEOUT", 60)
 # runaway loop from flooding the LLM context. 0 disables the cap.
 MAX_STREAM_CHARS: int = _env_int("SANDBOX_MAX_STREAM_CHARS", 20000)
 
+# --- Per-conversation namespace routing -------------------------------------
+# Every code execution runs in a namespace-scoped kernel so that separate
+# AnythingLLM conversations do not clobber each other's in-memory variables.
+# Idle namespace kernels are evicted to reclaim RAM (like a cloud sandbox's
+# inactivity timeout); an evicted namespace is rebuilt fresh on next use.
+NS_IDLE_TIMEOUT: int = _env_int("SANDBOX_NS_IDLE_TIMEOUT", 1800)  # seconds
+# Hard cap on simultaneously live namespace kernels; the least-recently-used is
+# evicted when the cap would be exceeded (bounds total memory).
+MAX_NAMESPACES: int = _env_int("SANDBOX_MAX_NAMESPACES", 8)
+
 # Image extensions rendered as inline Markdown images; everything else becomes a
 # plain Markdown link.
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
