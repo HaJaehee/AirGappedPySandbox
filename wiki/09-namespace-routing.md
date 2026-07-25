@@ -72,6 +72,14 @@ Files (`./workspace`) remain **shared** across namespaces so uploads Just Work;
 only in-memory variables/imports are isolated. Residual: output filename
 collisions — mitigated by telling the model (rule 4) to use distinctive names.
 
+> **Decision (v0.3.0, user-confirmed): keep the workspace SHARED.** Per-namespace
+> file isolation was considered and explicitly declined — do not re-open it
+> without a new request. Known accepted tradeoffs: output filename collisions
+> across conversations, and possible artifact mis-attribution when two
+> conversations execute concurrently (the snapshot/diff is over the shared dir,
+> outside any cross-kernel lock). Fine for the single-user "one conversation at a
+> time" pattern.
+
 ## Honest limitations (carry these forward)
 
 - **Continuity depends on the model re-sending the tag.** After context
