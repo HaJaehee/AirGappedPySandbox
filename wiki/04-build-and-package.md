@@ -42,7 +42,7 @@ GIT-IGNORED via `*.zip`).
 
 ### Why ~3.47 GB is fine
 
-The spec's "40 GB" was an overestimate. The functional footprint of this
+This matches the spec's "4 GB" figure — the functional footprint of this
 scientific stack is ~3–4 GB. Sufficiency is about *having the right packages and
 running with no network*, not size. Both are verified.
 

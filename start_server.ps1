@@ -1,6 +1,6 @@
 # Launch the Air-Gapped Python Sandbox MCP server.
 #
-# Edit $PortablePython to point at your 40 GB portable Python interpreter, then
+# Edit $PortablePython to point at your 4 GB portable Python interpreter, then
 # run:  powershell -ExecutionPolicy Bypass -File .\start_server.ps1
 #
 # AnythingLLM normally launches server.py for you via its MCP config (see

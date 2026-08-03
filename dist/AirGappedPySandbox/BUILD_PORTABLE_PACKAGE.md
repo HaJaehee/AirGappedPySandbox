@@ -26,7 +26,7 @@
 AirGappedPySandbox\
 ├─ PACKAGE_INFO.txt             ← 패키지 개요/빠른 시작
 ├─ BUILD_PORTABLE_PACKAGE.md    ← 이 매뉴얼
-├─ WPy64-313130\                ← 포터블 Python 본체 (WinPython, 모든 라이브러리 포함, 이게 "40GB")
+├─ WPy64-313130\                ← 포터블 Python 본체 (WinPython, 모든 라이브러리 포함, 이게 "4GB")
 │   └─ python\python.exe            * 실제 인터프리터 경로
 └─ mcp-server\                  ← 서버 코드 (이 폴더가 매뉴얼의 mcp-server\)
     ├─ server.py, kernel_manager.py, artifacts.py, config.py
@@ -101,7 +101,7 @@ conda pack -n airgap -o airgap-python.tar.gz
 
 ## 3. 데이터 라이브러리 설치 (커널용)
 
-빌드 PC에서, 위의 포터블 Python 에 데이터 사이언스 스택을 설치합니다. 이 단계가 용량의 대부분("40GB")을
+빌드 PC에서, 위의 포터블 Python 에 데이터 사이언스 스택을 설치합니다. 이 단계가 용량의 대부분("4GB")을
 차지합니다.
 
 ```powershell

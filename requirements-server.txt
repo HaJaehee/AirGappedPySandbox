@@ -3,7 +3,7 @@
 #
 # The heavy data-science stack (pandas, numpy, sympy, pdfplumber, matplotlib,
 # openpyxl, lxml, python-docx, ...) is NOT listed here: it belongs to the
-# separate 40 GB portable Python that runs the kernel (see README, "Air-gapped
+# separate 4 GB portable Python that runs the kernel (see README, "Air-gapped
 # deployment"). If you run the server WITH the portable Python, add the three
 # packages below into that distribution as well.
 #

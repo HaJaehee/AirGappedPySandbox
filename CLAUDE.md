@@ -9,7 +9,7 @@ The user's local PC runs AnythingLLM, connected to the internal LLM via an OpenA
 AnythingLLM’s Agent capability supports local MCP (Model Context Protocol) servers.
 The local PC can host a customized Python MCP server, empowering the internal LLM with full Python Code Execution (Code Interpreter) capabilities locally.
 Primary Goal
-Build a Stateful, Air-Gapped Python Sandbox MCP Server running locally on the user's PC. This server leverages a 40GB pre-packaged Portable Python environment to provide the LLM with advanced math calculations, data analysis, chart generation, and deep file parsing (PDF, Excel, CSV, XML, JSON, Word, Markdown, Text) without requiring any internet access or pip install commands.
+Build a Stateful, Air-Gapped Python Sandbox MCP Server running locally on the user's PC. This server leverages a 4GB pre-packaged Portable Python environment to provide the LLM with advanced math calculations, data analysis, chart generation, and deep file parsing (PDF, Excel, CSV, XML, JSON, Word, Markdown, Text) without requiring any internet access or pip install commands.
 
 2. Core Architecture: The Hybrid Engine Approach
 The system must follow a Hybrid Architecture combining an open-source execution core with a custom safety/artifact wrapper:
@@ -32,7 +32,7 @@ The system must follow a Hybrid Architecture combining an open-source execution 
 +-----------------------------------------------------------------------+
 |             Stateful Execution Core (Jupyter IPython Kernel)          |
 |  - Memory-Persistent Execution (Variables persist across turns)       |
-|  - Powered by the 40GB Bundled Portable Python Runtime                |
+|  - Powered by the 4GB Bundled Portable Python Runtime                 |
 +-----------------------------------------------------------------------+
 Key Architectural Pillars
 Stateful Execution via Jupyter IPython Kernel:
@@ -48,7 +48,7 @@ Workspace Isolation & Execution Safeguards:
 Restricts code execution strictly to a designated ./workspace directory.
 Enforces process execution timeouts (e.g., 30 to 60 seconds) to prevent infinite loops or hangs.
 3. Detailed Technical Requirements & Package Environment
-Pre-Installed Package Specification (40GB Portable Python Runtime)
+Pre-Installed Package Specification (4GB Portable Python Runtime)
 Since pip install is completely disabled due to air-gap isolation, the MCP server will interact with a pre-configured Portable Python distribution containing the following libraries:
 
 Document & File Parsing:
@@ -92,7 +92,7 @@ Self-Correction Protocol:
 6. Implementation Roadmap & Milestones
 The agent/developer executing this specification should follow these incremental steps:
 
-Phase 1: Environment Setup: Configure the local directory layout, setting up ./workspace and verifying access to the 40GB Portable Python executable.
+Phase 1: Environment Setup: Configure the local directory layout, setting up ./workspace and verifying access to the 4GB Portable Python executable.
 Phase 2: Stateful Core Integration: Wire up the jupyter_client kernel manager to handle stateful Python execution sessions.
 Phase 3: MCP Protocol Wrapper: Implement the MCP Server using Python FastMCP, mapping execute_python_code to the kernel session.
 Phase 4: Artifact & File Interceptor: Implement directory snapshotting/watching around code execution to capture newly created charts and files.

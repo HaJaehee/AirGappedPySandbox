@@ -29,13 +29,13 @@ server.py ── FastMCP 래퍼 ────────────────
 kernel_manager.py ── StatefulKernel (jupyter_client) ─────────┘
       │  ZeroMQ
       ▼
-IPython 커널  ← 40GB 포터블 Python으로 실행됨
+IPython 커널  ← 4GB 포터블 Python으로 실행됨
       (pandas, numpy, sympy, pdfplumber, matplotlib, openpyxl, lxml, ...)
 ```
 
 **핵심 설계 결정 — 두 개의 인터프리터로 분리.** MCP 서버 프로세스 자체는 `mcp` + `jupyter_client` +
 `ipykernel`만 필요합니다. 서버가 실행하는 *커널*은 **다른** 인터프리터에서 돌릴 수 있는데, 바로 모든
-데이터 사이언스 라이브러리를 담고 있는 40GB 포터블 Python입니다. 이 커널 인터프리터는
+데이터 사이언스 라이브러리를 담고 있는 4GB 포터블 Python입니다. 이 커널 인터프리터는
 `SANDBOX_KERNEL_PYTHON` 환경 변수로 선택합니다. 이렇게 하면 서버는 가볍게 유지되고, 어떤 것도 재설치할
 필요 없이 미리 빌드된 배포판을 그대로 가리키게 할 수 있습니다.
 
@@ -85,7 +85,7 @@ IPython 커널  ← 40GB 포터블 Python으로 실행됨
 
 ### 1. 포터블 Python 준비 (커널 인터프리터)
 
-40GB 포터블 Python에는 데이터 사이언스 스택 **및** `ipykernel`이 포함되어 있어야 합니다. 다음이 이미 있어야
+4GB 포터블 Python에는 데이터 사이언스 스택 **및** `ipykernel`이 포함되어 있어야 합니다. 다음이 이미 있어야
 합니다: `pandas`, `numpy`, `scipy`, `sympy`, `matplotlib`, `seaborn`, `pdfplumber`, `pypdf`, `PyMuPDF`,
 `openpyxl`, `xlsxwriter`, `xlrd`, `lxml`, `xmltodict`, `python-docx`, `markdown`, `beautifulsoup4`.
 커널 프로세스가 실제로 실행하는 `ipykernel`도 반드시 포함되어야 합니다.

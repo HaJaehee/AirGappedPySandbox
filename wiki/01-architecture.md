@@ -27,7 +27,7 @@ Python interpreters:
 
 - **Server interpreter** needs only `mcp`, `jupyter_client`, `ipykernel`.
 - **Kernel interpreter** (`config.KERNEL_PYTHON`, env `SANDBOX_KERNEL_PYTHON`)
-  holds the heavy data-science stack — the 40 GB-class portable Python.
+  holds the heavy data-science stack — the 4 GB-class portable Python.
 
 **Why it matters:** the server stays lightweight and you can point it at any
 pre-built distribution without reinstalling. It is implemented in

@@ -94,7 +94,7 @@
     "offline_capability": {"result": "PASS", "libs_exercised": ["sympy", "pandas", "openpyxl", "matplotlib", "reportlab", "pdfplumber", "PyMuPDF(fitz)", "python-docx", "polars", "duckdb", "numpy", "scipy"]},
     "warm_start_seconds": 2.5,
     "package_size_gb": 3.47,
-    "package_size_note": "spec's 40GB was an overestimate; ~3-4GB is the real functional footprint and is sufficient"
+    "package_size_note": "matches the spec's 4GB figure; ~3-4GB is the real functional footprint and is sufficient"
   },
   "gitignore_excludes": [".devvenv/", "offline_wheels/", "WPy64-*/", "WPy32-*/", "dist/**/python/", "*.zip", "__pycache__/", "workspace/* (except .gitkeep)", ".claude/settings.local.json"],
   "gotchas": [

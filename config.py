@@ -4,7 +4,7 @@ Every value can be overridden with an environment variable so the same code
 runs unchanged on a developer machine and on the locked-down air-gapped host.
 
 The single most important setting is ``KERNEL_PYTHON``: the interpreter used to
-launch the IPython kernel. Point it at the 40 GB portable Python distribution
+launch the IPython kernel. Point it at the 4 GB portable Python distribution
 that ships with pandas / numpy / sympy / pdfplumber / matplotlib etc. The MCP
 server process itself only needs ``mcp`` and ``jupyter_client`` and may run on a
 different interpreter.
@@ -44,7 +44,7 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parent
 # Isolated directory that holds user uploads and generated artifacts.
 WORKSPACE_DIR: Path = _env_path("SANDBOX_WORKSPACE", PROJECT_ROOT / "workspace")
 
-# Interpreter that runs the stateful IPython kernel (the 40 GB portable Python).
+# Interpreter that runs the stateful IPython kernel (the 4 GB portable Python).
 # Defaults to the interpreter running this server, which is convenient for
 # development but should be set explicitly in production.
 KERNEL_PYTHON: str = os.environ.get("SANDBOX_KERNEL_PYTHON", sys.executable)

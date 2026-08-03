@@ -4,7 +4,7 @@ Wraps a single long-lived IPython kernel (via ``jupyter_client``) so that
 variables, imported modules and parsed dataframes persist across separate
 ``execute_python_code`` tool calls. The kernel is launched with a configurable
 interpreter (``config.KERNEL_PYTHON``) so the heavy data-science libraries can
-live in the 40 GB portable Python while the MCP server runs anywhere.
+live in the 4 GB portable Python while the MCP server runs anywhere.
 
 Timeout policy: an over-running cell is interrupted. If the kernel returns to
 idle it is reused (state preserved). If it stays wedged past a grace period --
