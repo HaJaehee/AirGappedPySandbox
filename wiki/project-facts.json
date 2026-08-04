@@ -4,7 +4,7 @@
   "as_of_commit": "229fb8a",
   "project": {
     "name": "Air-Gapped Python Sandbox MCP Server",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "version_source_of_truth": "config.VERSION (reported over MCP serverInfo.version; mirrored in README.md version history)",
     "goal": "Stateful offline Python code-interpreter exposed to an LLM over MCP, backed by a portable Python, for math/data/charts/document-parsing with no internet and no pip.",
     "status": "complete and verified; work is packaging/hardening/docs",
@@ -49,13 +49,14 @@
     "config.py": "settings + env overrides; PROJECT_ROOT, WORKSPACE_DIR, KERNEL_PYTHON, timeouts, ensure_workspace()",
     "kernel_manager.py": "StatefulKernel (cross-interpreter launch; timeout->interrupt->restart) + KernelPool/POOL (per-namespace kernels, warm reserve, idle eviction, LRU cap); KERNEL kept for test_core only",
     "artifacts.py": "snapshot(), diff(), Artifact.to_markdown()",
-    "server.py": "FastMCP tools + _RULES + _format_response + _resolve_workspace_file + main()",
+    "server.py": "FastMCP tools + _RULES + _format_response + _resolve_workspace_file (existing file) + _resolve_new_workspace_path (file to create) + _display_paths + main()",
     "check_environment.py": "pre-flight package probe + kernel boot; RESULT: PASS/FAIL",
-    "test_core.py": "14 kernel/artifact smoke checks, no MCP import"
+    "test_core.py": "36 smoke checks: 14 kernel/artifact (no MCP import) + 22 write_workspace_file path-safety/policy checks behind a guarded `import server` that prints [SKIP] if the MCP SDK is absent"
   },
   "mcp_tools": [
     {"name": "execute_python_code", "input": {"code": "str", "namespace": "str (required; 'new' to mint)"}, "output": "namespace banner + text block (status/stdout/last-expr/stderr/artifacts) + reminder", "stateful": true, "hidden_param": "ctx: Context (FastMCP-injected, future _meta hook)"},
     {"name": "run_python_file", "input": {"file_path": "str", "namespace": "str (required)"}, "output": "same as execute_python_code", "runs_as": "__main__", "isolation": "path must resolve inside ./workspace", "added_in": "229fb8a"},
+    {"name": "write_workspace_file", "input": {"filename": "str", "content": "str", "overwrite": "bool (default false)"}, "output": "write_status SUCCESS|ERROR + file line + artifact link + run_python_file hint for .py", "stateful": false, "executes": false, "namespace": "not taken (no state; workspace is shared)", "why": "removes the self-referential 'python that writes its own source' pattern that breaks small/mid-size models", "isolation": "_resolve_new_workspace_path: containment checked on the parent after resolve(); rejects absolute paths, '..', Windows reserved device names, escapes", "overwrite_policy": "refuses by default (user uploads share the directory); refusal states the fix", "encoding": "UTF-8, no BOM, newline=\\n", "added_in": "0.4.0"},
     {"name": "list_workspace_files", "input": {}, "output": "text listing of ./workspace (shared across namespaces)"},
     {"name": "reset_kernel_state", "input": {"namespace": "str (required)"}, "output": "restarts ONE namespace kernel; clears its memory, keeps files, other namespaces untouched"}
   ],
@@ -78,6 +79,7 @@
     "SANDBOX_EXEC_TIMEOUT": {"default": 60, "unit": "seconds"},
     "SANDBOX_STARTUP_TIMEOUT": {"default": 60, "unit": "seconds"},
     "SANDBOX_MAX_STREAM_CHARS": {"default": 20000, "meaning": "cap on returned stdout/stderr; 0=unlimited"},
+    "SANDBOX_MAX_WRITE_BYTES": {"default": 1048576, "unit": "bytes", "meaning": "cap on one write_workspace_file call; 0=unlimited"},
     "SANDBOX_NS_IDLE_TIMEOUT": {"default": 1800, "unit": "seconds", "meaning": "evict idle namespace kernels after this"},
     "SANDBOX_MAX_NAMESPACES": {"default": 8, "meaning": "max simultaneous namespace kernels; LRU eviction over cap"},
     "SANDBOX_LAZY_START": {"default": null, "meaning": "if truthy, skip warm-reserve prewarm"}
@@ -88,7 +90,8 @@
     "offline_wheels": {"dir": "dist/AirGappedPySandbox/mcp-server/offline_wheels", "count": 69, "python_versions": ["3.11", "3.12", "3.13"], "platform": "win_amd64"}
   },
   "verification": {
-    "test_core": {"result": "14/14 PASS", "runtime": "WinPython 3.13"},
+    "test_core": {"result": "36/36 PASS", "runtime": "WinPython 3.13 and dev venv 3.12"},
+    "write_workspace_file": {"result": "22/22 PASS + end-to-end write->run_python_file verified (fib sum 1..10 = 143); 5 tools registered in the expected order", "runtime": "WinPython 3.13 and dev venv 3.12", "committed": false},
     "check_environment": {"result": "PASS"},
     "run_python_file": {"result": "8/8 PASS", "committed": false},
     "offline_capability": {"result": "PASS", "libs_exercised": ["sympy", "pandas", "openpyxl", "matplotlib", "reportlab", "pdfplumber", "PyMuPDF(fitz)", "python-docx", "polars", "duckdb", "numpy", "scipy"]},

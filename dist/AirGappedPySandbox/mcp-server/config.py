@@ -34,7 +34,7 @@ def _env_int(name: str, default: int) -> int:
 
 # Single source of truth for the project version. Keep in sync with the version
 # history table in README.md. The server reports this over MCP (serverInfo).
-VERSION: str = "0.3.0"
+VERSION: str = "0.4.0"
 
 # Project root = directory containing this file. The kernel's working directory
 # is set here so that the "./workspace/..." relative paths used by the LLM
@@ -59,6 +59,11 @@ STARTUP_TIMEOUT: int = _env_int("SANDBOX_STARTUP_TIMEOUT", 60)
 # Cap on captured stdout/stderr returned to the model (characters). Prevents a
 # runaway loop from flooding the LLM context. 0 disables the cap.
 MAX_STREAM_CHARS: int = _env_int("SANDBOX_MAX_STREAM_CHARS", 20000)
+
+# Cap on a single write_workspace_file call (bytes of UTF-8 content). The content
+# is text the model itself emitted, so its own context window keeps it far below
+# this; the cap only bounds a runaway loop. 0 disables the cap.
+MAX_WRITE_BYTES: int = _env_int("SANDBOX_MAX_WRITE_BYTES", 1_048_576)  # 1 MB
 
 # --- Per-conversation namespace routing -------------------------------------
 # Every code execution runs in a namespace-scoped kernel so that separate

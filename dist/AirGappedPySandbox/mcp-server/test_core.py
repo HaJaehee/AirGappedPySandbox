@@ -19,6 +19,95 @@ def check(name, cond):
 check.failed = 0
 
 
+def check_write_workspace_file():
+    """Path-safety and overwrite policy for write_workspace_file.
+
+    These import ``server`` (and therefore ``mcp``), which the rest of this file
+    deliberately avoids so it can run on a minimal interpreter. Skipped, not
+    failed, when the MCP SDK is absent.
+    """
+    try:
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] write_workspace_file checks (server import failed: {exc})")
+        return
+
+    ws = config.ensure_workspace()
+    made = []
+
+    # happy path: file lands in the workspace and comes back as a Markdown link
+    out = server.write_workspace_file("_smoke_write.py", "print('hi')\n")
+    made.append(ws / "_smoke_write.py")
+    check("write: SUCCESS status", out.startswith("write_status: SUCCESS"))
+    check("write: file on disk", (ws / "_smoke_write.py").read_text(encoding="utf-8") == "print('hi')\n")
+    check("write: artifact link", "[_smoke_write.py](./workspace/" in out)
+    check("write: .py suggests run_python_file", "run_python_file" in out)
+
+    # LF preserved verbatim on Windows (newline="\n")
+    server.write_workspace_file("_smoke_write.py", "a\nb\n", overwrite=True)
+    raw = (ws / "_smoke_write.py").read_bytes()
+    check("write: LF not translated to CRLF", b"\r\n" not in raw)
+
+    # overwrite policy
+    out = server.write_workspace_file("_smoke_write.py", "x")
+    check("write: refuses existing file", "already exists" in out and "ERROR" in out)
+    check("write: refusal names the fix", "overwrite=true" in out)
+    out = server.write_workspace_file("_smoke_write.py", "replaced\n", overwrite=True)
+    check("write: overwrite=True replaces", out.startswith("write_status: SUCCESS")
+          and (ws / "_smoke_write.py").read_text(encoding="utf-8") == "replaced\n")
+
+    # ./workspace/ prefix is accepted and stripped (not nested)
+    out = server.write_workspace_file("./workspace/_smoke_prefix.txt", "ok")
+    made.append(ws / "_smoke_prefix.txt")
+    check("write: ./workspace/ prefix stripped", (ws / "_smoke_prefix.txt").is_file())
+
+    # subdirectories are created inside the workspace
+    out = server.write_workspace_file("_smoke_dir/nested/note.md", "# hi")
+    made.append(ws / "_smoke_dir" / "nested" / "note.md")
+    check("write: creates subdirectories", (ws / "_smoke_dir" / "nested" / "note.md").is_file())
+
+    # containment: every escape attempt is refused and writes nothing
+    for bad in ("../escape.py", "..\\escape.py", "sub/../../escape.py",
+                "C:/Windows/Temp/escape.py", "/etc/passwd"):
+        out = server.write_workspace_file(bad, "nope")
+        check(f"write: refuses {bad!r}", out.startswith("write_status: ERROR"))
+    check("write: nothing escaped the workspace",
+          not (config.PROJECT_ROOT / "escape.py").exists())
+
+    # Windows reserved device names
+    for bad in ("NUL", "con.txt", "sub/LPT1.log"):
+        out = server.write_workspace_file(bad, "nope")
+        check(f"write: refuses reserved name {bad!r}", "reserved device name" in out)
+
+    # empty filename
+    check("write: refuses empty filename",
+          server.write_workspace_file("   ", "x").startswith("write_status: ERROR"))
+
+    # size cap
+    original = config.MAX_WRITE_BYTES
+    config.MAX_WRITE_BYTES = 10
+    out = server.write_workspace_file("_smoke_big.txt", "x" * 50)
+    config.MAX_WRITE_BYTES = original
+    check("write: enforces size cap", "over the" in out and "ERROR" in out)
+
+    # run_python_file rejects non-.py before touching the kernel
+    server.write_workspace_file("_smoke_notpy.txt", "data")
+    made.append(ws / "_smoke_notpy.txt")
+    out = server.run_python_file("_smoke_notpy.txt", namespace="_smoke_ns")
+    check("run_python_file: rejects non-.py", "is not a .py file" in out)
+
+    for path in made:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    try:
+        (ws / "_smoke_dir" / "nested").rmdir()
+        (ws / "_smoke_dir").rmdir()
+    except OSError:
+        pass
+
+
 def main():
     config.ensure_workspace()
     print(f"Kernel python: {config.KERNEL_PYTHON}")
@@ -86,6 +175,9 @@ def main():
     check("kernel survives timeout", "alive after timeout" in r.stdout)
 
     KERNEL.shutdown()
+
+    # 9. write_workspace_file: pure-function checks, no kernel needed.
+    check_write_workspace_file()
     print()
     if check.failed:
         print(f"{check.failed} check(s) FAILED")

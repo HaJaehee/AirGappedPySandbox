@@ -1,6 +1,6 @@
 # 에어갭 Python 샌드박스 — MCP 서버
 
-**버전: v0.3.0** ([변경 이력](#버전-이력))
+**버전: v0.4.0** ([변경 이력](#버전-이력))
 
 MCP(Model Context Protocol)를 통해 LLM에 노출되는 **상태 유지형(stateful) 오프라인 Python 코드 인터프리터**입니다.
 사내/기업용 LLM(AnythingLLM 에이전트 경유)이 수학 계산, 데이터 분석, 차트 생성, 문서 파싱을 위해
@@ -23,7 +23,7 @@ AnythingLLM 에이전트
       │  MCP (stdio)
       ▼
 server.py ── FastMCP 래퍼 ──────────────────────────────────┐
-      │   • execute_python_code / list_workspace_files        │  안전 &
+      │   • execute_python_code / write_workspace_file        │  안전 &
       │   • workspace 스냅샷 → 아티팩트 링크 (artifacts.py)    │  아티팩트 계층
       ▼                                                        │
 kernel_manager.py ── StatefulKernel (jupyter_client) ─────────┘
@@ -65,6 +65,11 @@ IPython 커널  ← 4GB 포터블 Python으로 실행됨
   커널에서 스크립트로 실행합니다(`if __name__ == '__main__'` 블록 실행). 반환 형식은 `execute_python_code`와
   동일하며, 파일의 최상위 변수/함수는 실행 후에도 메모리에 남습니다. 경로는 반드시 `./workspace` 안이어야
   하며(격리), 바깥 경로는 거부됩니다.
+- **`write_workspace_file(filename: str, content: str, overwrite: bool = False)`** — 텍스트(소스 코드, 메모,
+  CSV, Markdown, JSON 등)를 `./workspace` 안의 파일로 **그대로 저장**합니다. 코드를 실행하지 않으며
+  `namespace`도 필요 없습니다. 파일을 만들기 위해 "파일을 쓰는 파이썬 코드"를 다시 생성할 필요가 없어,
+  작은 모델이 가장 자주 실패하는 자기참조 패턴을 피할 수 있습니다. 경로는 `./workspace` 안으로 강제되며
+  (`..`·절대 경로·Windows 예약 장치명 거부), 기존 파일은 `overwrite=true` 없이는 덮어쓰지 않습니다.
 - **`list_workspace_files()`** — `./workspace`의 업로드/출력 파일을 크기와 형식과 함께 나열합니다(모든
   네임스페이스가 공유).
 - **`reset_kernel_state(namespace: str)`** — 지정한 네임스페이스의 커널만 재시작하여 그 대화의 메모리 상태를
@@ -157,6 +162,7 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 | `SANDBOX_EXEC_TIMEOUT` | `60` | 호출당 실행 타임아웃(초). |
 | `SANDBOX_STARTUP_TIMEOUT` | `60` | 커널 부팅 타임아웃(초). |
 | `SANDBOX_MAX_STREAM_CHARS` | `20000` | 반환 stdout/stderr 상한(0 = 무제한). |
+| `SANDBOX_MAX_WRITE_BYTES` | `1048576` | `write_workspace_file` 1회 쓰기 상한(바이트, 0 = 무제한). |
 | `SANDBOX_NS_IDLE_TIMEOUT` | `1800` | 유휴 네임스페이스 커널 회수까지의 시간(초). |
 | `SANDBOX_MAX_NAMESPACES` | `8` | 동시 유지 네임스페이스 커널 수 상한(초과 시 LRU 회수). |
 | `SANDBOX_LAZY_START` | 미설정 | 참(truthy)이면 시작 시 예열용 커널을 미리 부팅하지 않음. |
@@ -199,6 +205,7 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 
 | 버전 | 변경 내용 |
 |------|-----------|
-| **v0.3.0** | 대화별 **네임스페이스 라우팅**(필수 `namespace` 인자) 도입 — 한 서버 프로세스를 공유하는 여러 AnythingLLM 대화의 변수 충돌 방지. 네임스페이스별 커널 풀(웜 리저브·유휴 회수·LRU 상한), 응답 배너 되울림, 미래 `_meta` 대화 id 훅. |
+| **v0.4.0** | `write_workspace_file` 도구 추가 — 텍스트/코드를 코드 실행 없이 `./workspace`에 그대로 저장(경로 격리·덮어쓰기 보호·크기 상한). 작은 모델이 실패하던 '자기 소스를 인용하는 파이썬 생성' 패턴 제거. `run_python_file`은 이제 `.py`가 아닌 파일을 커널에 넘기기 전에 거부. |
+| v0.3.0 | 대화별 **네임스페이스 라우팅**(필수 `namespace` 인자) 도입 — 한 서버 프로세스를 공유하는 여러 AnythingLLM 대화의 변수 충돌 방지. 네임스페이스별 커널 풀(웜 리저브·유휴 회수·LRU 상한), 응답 배너 되울림, 미래 `_meta` 대화 id 훅. |
 | v0.2.0 | `run_python_file` 도구 추가(워크스페이스 `.py` 파일을 스크립트로 실행). |
 | v0.1.0 | 최초 기능 릴리스: 상태 유지형 IPython 커널 코어, 아티팩트 인터셉터, FastMCP 도구, 포터블 패키지(WinPython 3.13) + 오프라인 검증. |

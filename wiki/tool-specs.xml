@@ -44,7 +44,34 @@
       <rule>Resolved via _resolve_workspace_file(); must land inside ./workspace.</rule>
       <error condition="path outside workspace">execution_status: ERROR, message contains "outside the workspace"</error>
       <error condition="file missing">execution_status: ERROR, message contains "not found"</error>
+      <error condition="suffix is not .py">execution_status: ERROR, message contains "is not a .py file"; checked before the kernel is touched</error>
     </isolation>
+  </tool>
+
+  <tool name="write_workspace_file" stateful="false" executes="false" addedIn="0.4.0">
+    <description>Write text content verbatim to a file inside ./workspace. Exists so a model never has to generate Python that quotes its own source in order to save a file -- the self-referential nesting that most reliably breaks small/mid-size models. Takes NO namespace: it holds no state and the workspace is shared.</description>
+    <input>
+      <param name="filename" type="string" required="true">Path relative to ./workspace, e.g. "fib.py" or "reports/out.md". A leading "./workspace/", "workspace/" or "/workspace/" is stripped.</param>
+      <param name="content" type="string" required="true">Exact text to write. UTF-8, no BOM, newline="\n" so Windows text mode does not turn LF into CRLF.</param>
+      <param name="overwrite" type="boolean" required="false" default="false">Replace an existing file instead of refusing.</param>
+    </input>
+    <output type="text">
+      <field name="write_status" values="SUCCESS|ERROR"/>
+      <section name="file" desc="./workspace/... path, byte size, line count"/>
+      <section name="artifacts" desc="same Markdown links as the execution tools (snapshot/diff); empty diff is reported as a silent-failure warning"/>
+      <section name="next" desc="for a .py target, a run_python_file(...) hint that also re-surfaces the namespace requirement"/>
+    </output>
+    <isolation>
+      <rule>Resolved via _resolve_new_workspace_path(); the target need not exist, so containment is checked on the PARENT after resolve().</rule>
+      <rule>Subdirectories are created only after the containment check passes.</rule>
+      <error condition="absolute path or drive letter">write_status: ERROR, "pass a path relative to ./workspace"</error>
+      <error condition="'..' segment">write_status: ERROR, "'..' is not allowed"</error>
+      <error condition="resolves outside workspace">write_status: ERROR, "resolves outside ./workspace"</error>
+      <error condition="Windows reserved device name (NUL/CON/COM1-9/LPT1-9)">write_status: ERROR, "reserved device name" -- Windows would otherwise accept the write and discard it</error>
+      <error condition="file exists and overwrite=false">write_status: ERROR, "already exists"; message states the fix (overwrite=true or a new filename)</error>
+      <error condition="content over cap">write_status: ERROR, "over the N-byte limit"</error>
+    </isolation>
+    <limit envVar="SANDBOX_MAX_WRITE_BYTES" defaultBytes="1048576" note="0 disables; no append mode by design"/>
   </tool>
 
   <tool name="list_workspace_files" stateful="false">
@@ -61,12 +88,19 @@
     <output type="text" desc="restart confirmation"/>
   </tool>
 
-  <embeddedRules appliesTo="execute_python_code,run_python_file">
+  <embeddedRules appliesTo="execute_python_code,run_python_file"
+                 notAppliedTo="write_workspace_file,list_workspace_files"
+                 notAppliedReason="_RULES opens by demanding a namespace these tools do not take; adding ~500 tokens of kernel rules would undo the low-load design">
     <rule id="1" name="air-gap">No pip/apt/conda, no network. All libraries pre-installed.</rule>
     <rule id="2" name="print">Only print()ed output is returned.</rule>
     <rule id="3" name="plots-reports">matplotlib savefig+close (no show); plotly write_html; save pptx/pdf/docx/html into ./workspace.</rule>
     <rule id="4" name="paths">Read/write under ./workspace (relative paths).</rule>
     <rule id="5" name="self-correct">On stderr error, fix and retry.</rule>
   </embeddedRules>
+
+  <toolBoundaries note="overlapping tools are how small models pick the wrong one; keep these pointers in sync with the descriptions">
+    <boundary from="execute_python_code" to="write_workspace_file">"To simply SAVE text or code to a file without running it, use write_workspace_file instead -- it is simpler and needs no namespace."</boundary>
+    <boundary from="write_workspace_file" to="run_python_file">Appended to the response for a .py target: "Next: run it with run_python_file(...)".</boundary>
+  </toolBoundaries>
 
 </mcpServer>

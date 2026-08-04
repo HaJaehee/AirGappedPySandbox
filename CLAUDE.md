@@ -76,6 +76,17 @@ Tool 2: list_workspace_files (Helper Tool)
 Description: Lists all user-uploaded or generated files currently residing in the ./workspace directory (e.g., target PDFs, Excels, CSVs).
 Input Schema: None.
 Output Schema: Array of filenames, sizes, and extensions.
+Tool 3: write_workspace_file (Helper Tool)
+Description: Saves text content verbatim to a file inside ./workspace without executing anything. Exists because asking a model to "save this code to a file" otherwise forces it to emit Python that quotes its own source — a self-referential pattern that small/mid-size models reliably fail. Takes no namespace.
+Input Schema:
+filename (string, required): Path relative to ./workspace (a leading "./workspace/" is stripped).
+content (string, required): Exact text to write (UTF-8).
+overwrite (boolean, optional, default false): Replace an existing file instead of refusing.
+Output Schema:
+write_status (string): "SUCCESS" or "ERROR".
+file (string): Path, byte size, line count.
+artifacts (array of strings): Markdown link to the written file.
+NOTE — as-built tool set: the shipped server exposes five tools. Beyond the three above it adds run_python_file (run an existing ./workspace .py file as a script) and reset_kernel_state (restart one namespace's kernel). The execution tools also take a mandatory `namespace` argument for per-conversation isolation; see wiki/03-mcp-tools.md and wiki/09-namespace-routing.md for the authoritative interfaces.
 5. Prompt Engineering & System Rule Injection (Tool Description)
 To guarantee that the LLM utilizes the sandbox effectively without raising errors, the MCP tool description and system instructions injected into the LLM must strictly enforce the following rules:
 

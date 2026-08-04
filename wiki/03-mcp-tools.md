@@ -1,7 +1,7 @@
 # 03 — MCP Tools Reference
 
-Four tools are registered (verified order):
-`['execute_python_code', 'run_python_file', 'list_workspace_files', 'reset_kernel_state']`.
+Five tools are registered (verified order):
+`['execute_python_code', 'run_python_file', 'write_workspace_file', 'list_workspace_files', 'reset_kernel_state']`.
 
 All tools return a **single text block** (not a typed object). "Return value"
 means printed stdout + captured extras, never a Python object. A machine-readable
@@ -41,7 +41,49 @@ Run an existing `.py` file from `./workspace` as a script. Added in commit
   land **inside** `./workspace`. Accepts `sample.py`, `./workspace/sample.py`,
   bare names, and absolute paths within the workspace. Paths resolving outside →
   `execution_status: ERROR` ("outside the workspace"); missing file → ERROR
-  ("not found").
+  ("not found"); a non-`.py` suffix → ERROR ("is not a .py file"), checked
+  **before** the kernel is touched.
+
+## `write_workspace_file(filename: str, content: str, overwrite: bool = False) -> str`
+
+Write `content` verbatim into `./workspace`. **Does not execute anything and
+takes no `namespace`** — the workspace is shared across namespaces and this call
+holds no state, so requiring one would only add a failure mode.
+
+Why it exists: without it, "save this code to a file" forces the model to emit
+Python that contains its own source as a quoted string. That self-referential
+nesting is the single most reliable way to break a small/mid-size model — it
+typically drops the file-writing half and just prints the result instead. Two
+flat string params replace that entirely.
+
+- **Response shape** is its own, not `_format_response`: `write_status:`
+  (`SUCCESS` | `ERROR`), `--- file ---` (path, bytes, line count),
+  `--- artifacts ---` (same Markdown links as the execution tools, produced by
+  the same `snapshot`/`diff` pair — an empty diff is a silent-failure warning).
+  For a `.py` target it appends a `Next: run it with run_python_file(...)` hint,
+  which is also where the model is reminded that the *next* call needs a
+  namespace.
+- **Path safety** — `_resolve_new_workspace_path`, a separate resolver because
+  `_resolve_workspace_file` requires `is_file()` and the target does not exist
+  yet. Containment is checked on the **parent** directory after `resolve()`.
+  Rejects: absolute paths / drive letters, any `..` segment, Windows reserved
+  device names (`NUL`, `CON`, `COM1`…, which Windows would otherwise accept and
+  silently discard), and anything resolving outside the workspace. A leading
+  `./workspace/`, `workspace/` or `/workspace/` is stripped, so both `fib.py`
+  and `./workspace/fib.py` work. Subdirectories are created (`mkdir(parents)`)
+  only **after** the containment check passes.
+- **Overwrite policy:** refuses by default — user-uploaded PDFs/Excels live in
+  the same directory and a silent clobber would destroy input. The refusal names
+  its own fix ("call again with overwrite=true, or choose a different
+  filename"), which weak models follow far more reliably than an abstract rule.
+- **Encoding:** UTF-8, no BOM, `newline="\n"` so Windows text mode does not
+  rewrite every `\n` as `\r\n` — the file stays byte-identical to what the model
+  sent.
+- **Size cap:** `config.MAX_WRITE_BYTES` (`SANDBOX_MAX_WRITE_BYTES`, 1 MB). The
+  content is text the model itself emitted, so its own context window keeps it
+  far below the cap; this only bounds a runaway loop. For the same reason there
+  is deliberately **no append mode** — chunked writes have no real use case here
+  and would add a third required-ish param.
 
 ## `list_workspace_files() -> str`
 
@@ -57,7 +99,15 @@ state. Workspace files are **kept**; other namespaces are untouched. Pass the
 ## Embedded usage rules (the `_RULES` string)
 
 Injected into `execute_python_code` and `run_python_file` descriptions so the LLM
-self-regulates:
+self-regulates. **Not** injected into `write_workspace_file` or
+`list_workspace_files`: `_RULES` is mostly about the kernel and opens by
+demanding a `namespace` those tools do not take, and bolting ~500 tokens of
+kernel rules onto a deliberately low-load tool would undo its purpose.
+
+`execute_python_code`'s description carries a one-line boundary pointing at
+`write_workspace_file` for save-only requests. Keep that pointer if you touch
+either description — overlapping tools are how small models end up picking the
+wrong one.
 
 1. **Air-gap:** no `pip`/`apt`/`conda`, no network. Full pre-installed library
    list is enumerated in the description.
@@ -73,8 +123,9 @@ self-regulates:
 1. Add a `@mcp.tool(description=...)` function in **repo-root** `server.py`. Reuse
    `_format_response` + `snapshot`/`diff` for consistency. Embed `_RULES` if the
    tool executes user code.
-2. If it takes a path, validate with `_resolve_workspace_file` (never trust raw
-   paths — workspace isolation).
+2. If it takes a path, validate it — never trust raw paths (workspace isolation).
+   Use `_resolve_workspace_file` for a file that must already exist, or
+   `_resolve_new_workspace_path` for one you are about to create.
 3. Verify via `mcp.call_tool(...)` on the WinPython (see `06`), covering happy
    path + isolation + error cases.
 4. Sync `server.py` into `dist/AirGappedPySandbox/mcp-server/`.

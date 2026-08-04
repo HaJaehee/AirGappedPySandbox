@@ -180,8 +180,10 @@ def _format_response(code_result, artifacts) -> str:
         "its stdout, stderr, generated file links, and status. Variables and "
         "imports persist across calls WITHIN your namespace, so large files only "
         "need to be loaded once. Newly created files in ./workspace (charts, "
-        "CSVs, reports) are auto-detected and returned as Markdown links.\n\n"
-        + _RULES
+        "CSVs, reports) are auto-detected and returned as Markdown links.\n"
+        "(To simply SAVE text or code to a file without running it, use "
+        "write_workspace_file instead -- it is simpler and needs no namespace.)"
+        "\n\n" + _RULES
     )
 )
 def execute_python_code(code: str, namespace: str, ctx: Context | None = None) -> str:
@@ -244,6 +246,78 @@ def _resolve_workspace_file(file_path: str) -> tuple[Path | None, str | None]:
     )
 
 
+# Windows swallows writes to these device names silently, so reject them early.
+_WIN_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+_WS_PREFIXES = ("./workspace/", "workspace/", "/workspace/")
+
+
+def _resolve_new_workspace_path(filename: str) -> tuple[Path | None, str | None]:
+    """Resolve a target path for a file to be CREATED inside the workspace.
+
+    Unlike :func:`_resolve_workspace_file` this does not require the file to
+    exist yet, so containment is checked against the *parent* directory.
+
+    Returns (path, None) on success or (None, error_message) on failure.
+    """
+    ws = config.ensure_workspace().resolve()
+    raw = (filename or "").strip().replace("\\", "/")
+    if not raw:
+        return None, "Provide a filename, e.g. 'analysis.py'."
+
+    # Models write both 'x.py' and './workspace/x.py' -- normalise the prefix.
+    for prefix in _WS_PREFIXES:
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+
+    rel = Path(raw)
+    if rel.is_absolute() or rel.drive:
+        return None, (
+            f"Refused: pass a path relative to ./workspace, not '{filename}'."
+        )
+    if not rel.name:
+        return None, f"Refused: '{filename}' does not name a file."
+    if any(part == ".." for part in rel.parts):
+        return None, f"Refused: '..' is not allowed in '{filename}'."
+    if any(part.split(".")[0].upper() in _WIN_RESERVED for part in rel.parts):
+        return None, f"Refused: '{filename}' uses a Windows reserved device name."
+
+    target = ws / rel
+    try:
+        resolved_parent = target.parent.resolve()
+    except OSError:
+        return None, f"Refused: invalid path '{filename}'."
+    # Second line of defence: a symlink inside the workspace could still point out.
+    try:
+        resolved_parent.relative_to(ws)
+    except ValueError:
+        return None, f"Refused: '{filename}' resolves outside ./workspace."
+
+    return resolved_parent / target.name, None
+
+
+def _display_paths(target: Path) -> tuple[str, str]:
+    """Return (project-relative link path, workspace-relative path) for ``target``.
+
+    ``WORKSPACE_DIR`` can be pointed outside the project via SANDBOX_WORKSPACE, so
+    the project-relative form falls back to the absolute path (same rule as
+    ``artifacts.diff``).
+    """
+    try:
+        link = target.relative_to(config.PROJECT_ROOT).as_posix()
+    except ValueError:
+        link = target.as_posix()
+    try:
+        inner = target.relative_to(config.WORKSPACE_DIR.resolve()).as_posix()
+    except ValueError:
+        inner = target.name
+    return link, inner
+
+
 @mcp.tool(
     description=(
         "Run an existing Python (.py) file from the ./workspace directory in "
@@ -269,6 +343,13 @@ def run_python_file(file_path: str, namespace: str, ctx: Context | None = None) 
     resolved, err = _resolve_workspace_file(file_path)
     if err is not None:
         return _wrap(ns, source, f"execution_status: ERROR\n\n--- stderr ---\n{err}")
+    if resolved.suffix.lower() != ".py":
+        err = (
+            f"Refused: '{resolved.name}' is not a .py file. run_python_file only "
+            "runs Python scripts; use execute_python_code to open or parse other "
+            "file types."
+        )
+        return _wrap(ns, source, f"execution_status: ERROR\n\n--- stderr ---\n{err}")
 
     before = snapshot()
     # Run the file as __main__ so script semantics apply, then merge its public
@@ -285,6 +366,90 @@ def run_python_file(file_path: str, namespace: str, ctx: Context | None = None) 
     after = snapshot()
     artifacts = diff(before, after, config.PROJECT_ROOT)
     return _wrap(ns, source, _format_response(result, artifacts))
+
+
+@mcp.tool(
+    description=(
+        "Save text content to a file in ./workspace -- source code, notes, CSV, "
+        "Markdown, JSON, config. Use this whenever the user asks you to WRITE, "
+        "SAVE, or OUTPUT something AS A FILE. Do NOT generate Python that writes "
+        "the file itself; pass the text directly as `content`.\n\n"
+        "filename : path relative to ./workspace, e.g. \"fib.py\" or "
+        "\"reports/out.md\". A leading \"./workspace/\" is accepted and stripped.\n"
+        "content  : the exact text to write (UTF-8). Written verbatim.\n"
+        "overwrite: pass true only to replace an existing file (default false).\n\n"
+        "This tool does NOT execute anything and does NOT need a namespace. "
+        "To run a .py file you saved, call run_python_file next."
+    )
+)
+def write_workspace_file(filename: str, content: str, overwrite: bool = False) -> str:
+    """Write ``content`` verbatim to ``filename`` inside ./workspace.
+
+    Args:
+        filename: Path relative to ./workspace. Escapes are rejected.
+        content: Exact text to write, UTF-8 encoded with LF line endings.
+        overwrite: Replace an existing file instead of refusing.
+    """
+    target, err = _resolve_new_workspace_path(filename)
+    if err is not None:
+        return f"write_status: ERROR\n\n--- stderr ---\n{err}"
+
+    text = content if content is not None else ""
+    size = len(text.encode("utf-8"))
+    if config.MAX_WRITE_BYTES and size > config.MAX_WRITE_BYTES:
+        return (
+            "write_status: ERROR\n\n--- stderr ---\n"
+            f"Refused: content is {size} bytes, over the "
+            f"{config.MAX_WRITE_BYTES}-byte limit for one write."
+        )
+
+    link_path, inner_path = _display_paths(target)
+    if target.exists() and not target.is_file():
+        return (
+            "write_status: ERROR\n\n--- stderr ---\n"
+            f"Refused: '{filename}' is a directory, not a file."
+        )
+    if target.exists() and not overwrite:
+        try:
+            existing = target.stat().st_size
+        except OSError:
+            existing = 0
+        return (
+            "write_status: ERROR\n\n--- stderr ---\n"
+            f"Refused: './{link_path}' already exists ({existing / 1024:.1f} KB).\n"
+            "Either call again with overwrite=true, or choose a different filename."
+        )
+
+    before = snapshot()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # newline="\n" keeps the file byte-identical to what the model sent;
+        # Windows text mode would otherwise rewrite every \n as \r\n.
+        with open(target, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+    except OSError as exc:
+        return f"write_status: ERROR\n\n--- stderr ---\nCould not write '{filename}': {exc}"
+    after = snapshot()
+    artifacts = diff(before, after, config.PROJECT_ROOT)
+
+    line_count = text.count("\n") + 1 if text else 0
+    lines = [
+        "write_status: SUCCESS",
+        "\n--- file ---",
+        f"./{link_path}  ({size} B, {line_count} lines)",
+        "\n--- artifacts ---",
+    ]
+    if artifacts:
+        for art in artifacts:
+            lines.append(f"{art.to_markdown()}  ({art.size / 1024:.1f} KB)")
+    else:
+        lines.append("(warning: the write reported success but no file change was detected)")
+    if target.suffix.lower() == ".py":
+        lines.append(
+            f'\nNext: run it with run_python_file(file_path="{inner_path}", '
+            "namespace=<your namespace>)."
+        )
+    return "\n".join(lines)
 
 
 @mcp.tool(
