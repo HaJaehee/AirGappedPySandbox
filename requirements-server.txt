@@ -12,6 +12,6 @@
 # then on the offline host:
 #   pip install --no-index --find-links ./offline_wheels -r requirements-server.txt
 
-mcp>=1.2.0
+mcp>=1.2.0,<2
 jupyter_client>=8.0
 ipykernel>=6.0
