@@ -152,7 +152,7 @@ def _format_response(code_result, artifacts) -> str:
 
     stdout = code_result.stdout.rstrip("\n")
     lines.append("\n--- stdout ---")
-    lines.append(stdout if stdout else "(no printed output — remember to print() your results)")
+    lines.append(stdout if stdout else "(no printed output -- remember to print() your results)")
 
     if code_result.result_repr and not stdout:
         lines.append("\n--- last expression ---")
