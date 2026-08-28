@@ -42,8 +42,8 @@ Restart the agent, then enable the tools in the workspace's agent skills.
 
 Drop the target PDF/Excel/CSV into the folder that `SANDBOX_WORKSPACE` points at
 (`<BASE>\mcp-server\workspace`). The LLM finds them with `list_workspace_files`
-and reads them via relative `./workspace/...` paths. Generated outputs land in the
-same folder and come back as Markdown links.
+and reads them with plain relative names (`report.pdf`) — the kernel runs *inside*
+that folder. Generated outputs land there too and come back as Markdown links.
 
 ## Runtime notes
 

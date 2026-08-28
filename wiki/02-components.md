@@ -12,8 +12,8 @@ All configuration in one place. Reads env vars, falls back to sane defaults.
 
 | Symbol | Env var | Default | Meaning |
 |--------|---------|---------|---------|
-| `PROJECT_ROOT` | — | dir of `config.py` | Kernel's working dir; makes `./workspace/...` resolve consistently. |
-| `WORKSPACE_DIR` | `SANDBOX_WORKSPACE` | `PROJECT_ROOT/workspace` | Isolated I/O dir. |
+| `PROJECT_ROOT` | — | dir of `config.py` | Anchor for a *relative* `SANDBOX_WORKSPACE` and for chat-link paths. |
+| `WORKSPACE_DIR` | `SANDBOX_WORKSPACE` | `PROJECT_ROOT/workspace` | Isolated I/O dir, **and the kernel's working directory**. A relative env value resolves against `PROJECT_ROOT`, not the host's cwd. |
 | `KERNEL_PYTHON` | `SANDBOX_KERNEL_PYTHON` | `sys.executable` | Interpreter that runs the kernel (the portable Python). |
 | `EXEC_TIMEOUT` | `SANDBOX_EXEC_TIMEOUT` | `60` | Per-call timeout (s). |
 | `STARTUP_TIMEOUT` | `SANDBOX_STARTUP_TIMEOUT` | `60` | Kernel boot timeout (s). |
@@ -35,7 +35,8 @@ All configuration in one place. Reads env vars, falls back to sane defaults.
     `reset_kernel_state` and by the timeout-recovery path.
   - `shutdown()` — stop channels + kill kernel.
   - `_launch_locked()` — the cross-interpreter launch (KernelSpec override, see
-    `01`). Runs kernel with `cwd=PROJECT_ROOT`.
+    `01`). Runs kernel with `cwd=ensure_workspace()`, so a plain relative path
+    in executed code lands where every tool looks.
   - `_execute_locked()` — sends code, drains iopub filtered by `msg_id`, collects
     stdout/stderr/`result_repr`/`error_name`; on timeout calls
     `_handle_timeout_locked`.
@@ -57,6 +58,10 @@ All configuration in one place. Reads env vars, falls back to sane defaults.
   changed between snapshots, newest first.
 - **`Artifact`** dataclass — `path, rel_path (POSIX), size, is_image`;
   `to_markdown()` → `![name](./workspace/..)` for images else `[name](..)`.
+- **`chat_link_path(path, project_root)`** — the link path used in responses.
+  Project-relative normally; when `SANDBOX_WORKSPACE` points outside the project
+  it falls back to `workspace/<name>` instead of leaking an absolute path (which
+  `to_markdown` would have turned into a dead `./D:/...` link).
 
 Rationale: a snapshot/diff is more predictable inside an air-gapped host than a
 filesystem-watcher thread.
@@ -65,7 +70,8 @@ filesystem-watcher thread.
 
 - `mcp = FastMCP("air-gapped-python-sandbox")`.
 - `_RULES` — the usage rules string injected into tool descriptions (no pip,
-  always `print()`, save plots not `show()`, `./workspace/` paths, self-correct).
+  always `print()`, save plots not `show()`, plain relative paths — the cwd *is*
+  the workspace — self-correct).
   Lists the full pre-installed library set.
 - `_format_response(result, artifacts)` — renders the text block returned to the
   LLM (see `01`, step 6).
@@ -78,8 +84,9 @@ filesystem-watcher thread.
   and anything landing outside the workspace; strips a leading `./workspace/`.
   Used by `write_workspace_file`.
 - `_display_paths(target) -> (link_path, workspace_relative_path)` — formats a
-  target for the response; falls back to the absolute path when `SANDBOX_WORKSPACE`
-  points outside `PROJECT_ROOT` (same rule as `artifacts.diff`).
+  target for the response; via `chat_link_path` it keeps the `workspace/<name>`
+  shape even when `SANDBOX_WORKSPACE` points outside `PROJECT_ROOT` (same rule as
+  `artifacts.diff`).
 - Tools: `execute_python_code`, `run_python_file`, `write_workspace_file`,
   `list_workspace_files`, `reset_kernel_state` (see `03`).
 - `main()` — `ensure_workspace()`, warm-start `KERNEL.start()` unless

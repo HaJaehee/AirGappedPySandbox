@@ -20,6 +20,10 @@ import re
 import sys
 from pathlib import Path
 
+# Notes are Korean; a cp949 console would otherwise crash on printing them.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "config.py"
 README = ROOT / "README.md"

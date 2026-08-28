@@ -24,7 +24,7 @@ from pathlib import Path
 from mcp.server.fastmcp import Context, FastMCP
 
 import config
-from artifacts import diff, snapshot
+from artifacts import chat_link_path, diff, snapshot
 from kernel_manager import POOL
 
 mcp = FastMCP("air-gapped-python-sandbox")
@@ -50,13 +50,15 @@ IMPORTANT RULES for this sandbox:
 2. PRINT RESULTS: Only what you print() is returned. Wrap every final value,
    summary or answer in print().
 3. PLOTS & REPORTS:
-   - For matplotlib: Never use plt.show(). Save figures via plt.savefig('./workspace/chart.png') and call plt.close().
-   - For plotly: Save interactive charts via fig.write_html('./workspace/chart.html').
-   - For presentations & reports: Save .pptx, .pdf, .docx, .html files into ./workspace/.
-   All saved files in ./workspace/ are auto-detected and returned as Markdown links.
-4. PATHS: Read inputs and write outputs under ./workspace/ (relative paths).
-   Uploaded files live there; call list_workspace_files to see them. The
-   workspace is shared across namespaces, so use distinctive output filenames.
+   - For matplotlib: Never use plt.show(). Save figures via plt.savefig('chart.png') and call plt.close().
+   - For plotly: Save interactive charts via fig.write_html('chart.html').
+   - For presentations & reports: Save .pptx, .pdf, .docx, .html files with plain relative names.
+   Every file you save is auto-detected and returned as a Markdown link.
+4. PATHS: Your working directory IS the workspace. Use plain relative names
+   ('chart.png', 'out/report.pdf') for both inputs and outputs -- do NOT prefix
+   them with './workspace/'. Uploaded files are already here; call
+   list_workspace_files to see them. The workspace is shared across namespaces,
+   so use distinctive output filenames.
 5. SELF-CORRECT: If stderr shows an error, read the traceback, fix the code and
    call execute_python_code again (with the same namespace).
 Variables/imports/dataframes PERSIST between calls WITHIN your namespace.
@@ -152,7 +154,7 @@ def _format_response(code_result, artifacts) -> str:
 
     stdout = code_result.stdout.rstrip("\n")
     lines.append("\n--- stdout ---")
-    lines.append(stdout if stdout else "(no printed output — remember to print() your results)")
+    lines.append(stdout if stdout else "(no printed output -- remember to print() your results)")
 
     if code_result.result_repr and not stdout:
         lines.append("\n--- last expression ---")
@@ -169,7 +171,7 @@ def _format_response(code_result, artifacts) -> str:
             size_kb = art.size / 1024
             lines.append(f"{art.to_markdown()}  ({size_kb:.1f} KB)")
     else:
-        lines.append("(no new files created in ./workspace)")
+        lines.append("(no new files created in the workspace)")
 
     return "\n".join(lines)
 
@@ -179,7 +181,7 @@ def _format_response(code_result, artifacts) -> str:
         "Execute Python code in a STATEFUL, offline IPython kernel and return "
         "its stdout, stderr, generated file links, and status. Variables and "
         "imports persist across calls WITHIN your namespace, so large files only "
-        "need to be loaded once. Newly created files in ./workspace (charts, "
+        "need to be loaded once. Newly created files in the workspace (charts, "
         "CSVs, reports) are auto-detected and returned as Markdown links.\n"
         "(To simply SAVE text or code to a file without running it, use "
         "write_workspace_file instead -- it is simpler and needs no namespace.)"
@@ -191,7 +193,8 @@ def execute_python_code(code: str, namespace: str, ctx: Context | None = None) -
 
     Args:
         code: The Python source to execute. Use print() to return values and
-              save any plots to ./workspace/ instead of calling plt.show().
+              save any plots with a plain relative filename (the working
+              directory is the workspace) instead of calling plt.show().
         namespace: Your conversation's namespace id. Pass "new" on your first
               call to create one; then pass the exact active_namespace returned.
     """
@@ -208,21 +211,28 @@ def execute_python_code(code: str, namespace: str, ctx: Context | None = None) -
 def _resolve_workspace_file(file_path: str) -> tuple[Path | None, str | None]:
     """Resolve a user-supplied path to a real file INSIDE the workspace.
 
-    Accepts absolute paths, project-relative paths (e.g. "./workspace/x.py"),
-    and plain names/relative paths interpreted against ./workspace. Enforces
+    Accepts absolute paths, workspace-prefixed paths (e.g. "./workspace/x.py")
+    and plain names/relative paths. All non-absolute forms are interpreted
+    against the workspace, wherever SANDBOX_WORKSPACE puts it. Enforces
     isolation: the resolved file must live under the workspace directory.
 
     Returns (path, None) on success or (None, error_message) on failure.
     """
     ws = config.ensure_workspace().resolve()
-    raw = Path(file_path.strip())
+    text = file_path.strip().replace("\\", "/")
+    # "./workspace/x.py" means "x.py inside the workspace", wherever the
+    # workspace happens to live. Resolving it against PROJECT_ROOT (as this
+    # did) pointed at the server's own directory once SANDBOX_WORKSPACE moved,
+    # which either missed the file or matched a stale same-named file there and
+    # then refused it for being outside the workspace.
+    stripped = _strip_workspace_prefix(text)
+    raw = Path(stripped)
     candidates: list[Path] = []
     if raw.is_absolute():
         candidates.append(raw)
     else:
-        candidates.append(config.PROJECT_ROOT / raw)  # e.g. ./workspace/x.py
-        candidates.append(ws / raw)                    # e.g. x.py or sub/x.py
-        candidates.append(ws / raw.name)               # bare filename fallback
+        candidates.append(ws / raw)       # e.g. x.py or sub/x.py
+        candidates.append(ws / raw.name)  # bare filename fallback
 
     for cand in candidates:
         try:
@@ -255,6 +265,17 @@ _WIN_RESERVED = {
 _WS_PREFIXES = ("./workspace/", "workspace/", "/workspace/")
 
 
+def _strip_workspace_prefix(text: str) -> str:
+    """Drop a leading "./workspace/" so the rest is workspace-relative.
+
+    Models write both 'x.py' and './workspace/x.py'; both name the same file.
+    """
+    for prefix in _WS_PREFIXES:
+        if text.lower().startswith(prefix):
+            return text[len(prefix):]
+    return text
+
+
 def _resolve_new_workspace_path(filename: str) -> tuple[Path | None, str | None]:
     """Resolve a target path for a file to be CREATED inside the workspace.
 
@@ -268,11 +289,7 @@ def _resolve_new_workspace_path(filename: str) -> tuple[Path | None, str | None]
     if not raw:
         return None, "Provide a filename, e.g. 'analysis.py'."
 
-    # Models write both 'x.py' and './workspace/x.py' -- normalise the prefix.
-    for prefix in _WS_PREFIXES:
-        if raw.lower().startswith(prefix):
-            raw = raw[len(prefix):]
-            break
+    raw = _strip_workspace_prefix(raw)
 
     rel = Path(raw)
     if rel.is_absolute() or rel.drive:
@@ -301,16 +318,13 @@ def _resolve_new_workspace_path(filename: str) -> tuple[Path | None, str | None]
 
 
 def _display_paths(target: Path) -> tuple[str, str]:
-    """Return (project-relative link path, workspace-relative path) for ``target``.
+    """Return (chat link path, workspace-relative path) for ``target``.
 
-    ``WORKSPACE_DIR`` can be pointed outside the project via SANDBOX_WORKSPACE, so
-    the project-relative form falls back to the absolute path (same rule as
-    ``artifacts.diff``).
+    ``WORKSPACE_DIR`` can be pointed outside the project via SANDBOX_WORKSPACE;
+    ``chat_link_path`` keeps the link in the familiar "workspace/<name>" shape
+    either way (same rule as ``artifacts.diff``).
     """
-    try:
-        link = target.relative_to(config.PROJECT_ROOT).as_posix()
-    except ValueError:
-        link = target.as_posix()
+    link = chat_link_path(target, config.PROJECT_ROOT)
     try:
         inner = target.relative_to(config.WORKSPACE_DIR.resolve()).as_posix()
     except ValueError:

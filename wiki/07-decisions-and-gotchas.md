@@ -18,6 +18,17 @@
   intuition ("run this script") while preserving statefulness for follow-ups.
 - **Warm-start on by default** — first call fast + config errors surface at
   startup. Opt out with `SANDBOX_LAZY_START`.
+- **The kernel runs *inside* the workspace** (`cwd=WORKSPACE_DIR`), not at
+  `PROJECT_ROOT` (v0.4.1). While the workspace was the project's own
+  `./workspace`, both were equivalent; once `SANDBOX_WORKSPACE` pointed
+  elsewhere — the whole point of that setting — code writing
+  `./workspace/chart.png` landed under the *server's* directory while every
+  tool kept reading `SANDBOX_WORKSPACE`, and files appeared to vanish. The
+  tool rules now tell the model to use plain relative names.
+- **A relative `SANDBOX_WORKSPACE` anchors at `PROJECT_ROOT`**, not at the
+  process cwd. The host (AnythingLLM, a launcher script) picks its own cwd, so
+  `./workspace` would otherwise mean a different folder per host — and a
+  different one than a sibling filesystem MCP server was given.
 
 ## Windows / offline gotchas
 

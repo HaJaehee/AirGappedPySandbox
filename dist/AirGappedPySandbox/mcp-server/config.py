@@ -18,8 +18,21 @@ from pathlib import Path
 
 
 def _env_path(name: str, default: Path) -> Path:
+    """Absolute path from an env var, or ``default``.
+
+    A *relative* value is resolved against the project root, not the process
+    working directory. The server is spawned by a host (AnythingLLM, an MCP
+    client, a launcher script) that chooses its own cwd, so ``./workspace``
+    would otherwise mean a different directory on every host -- and a different
+    one than the sibling filesystem MCP server was given.
+    """
     value = os.environ.get(name)
-    return Path(value).expanduser().resolve() if value else default
+    if not value:
+        return default
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (Path(__file__).resolve().parent / path).resolve()
 
 
 def _env_int(name: str, default: int) -> int:
@@ -34,7 +47,7 @@ def _env_int(name: str, default: int) -> int:
 
 # Single source of truth for the project version. Keep in sync with the version
 # history table in README.md. The server reports this over MCP (serverInfo).
-VERSION: str = "0.4.0"
+VERSION: str = "0.4.1"
 
 # Project root = directory containing this file. The kernel's working directory
 # is set here so that the "./workspace/..." relative paths used by the LLM

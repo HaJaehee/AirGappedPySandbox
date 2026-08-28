@@ -101,9 +101,16 @@ class StatefulKernel:
         # Override the resolved spec so KernelManager builds its launch command
         # from our argv instead of a globally-installed kernelspec.
         km._kernel_spec = spec
-        # Run the kernel with the project root as its working directory so that
-        # relative "./workspace/..." paths behave identically everywhere.
-        km.start_kernel(cwd=str(config.PROJECT_ROOT))
+        # Run the kernel *inside* the workspace so a plain relative path in
+        # executed code ("chart.png") lands where every tool looks.
+        #
+        # This used to be PROJECT_ROOT, which only worked while the workspace
+        # was the project's own ./workspace. Once SANDBOX_WORKSPACE points
+        # elsewhere -- the whole reason that setting exists -- executed code
+        # writing "./workspace/chart.png" went to the *server's* directory
+        # while write_workspace_file, run_python_file, list_workspace_files and
+        # the artifact scan all used SANDBOX_WORKSPACE. Files vanished.
+        km.start_kernel(cwd=str(config.ensure_workspace()))
         kc = km.client()
         kc.start_channels()
         try:

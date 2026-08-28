@@ -12,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from config import IMAGE_EXTENSIONS, WORKSPACE_DIR
+import config
+from config import IMAGE_EXTENSIONS
 
 
 @dataclass(frozen=True)
@@ -31,12 +32,13 @@ class Artifact:
         return f"[{self.path.name}]({href})"
 
 
-def snapshot(directory: Path = WORKSPACE_DIR) -> dict[str, tuple[float, int]]:
+def snapshot(directory: Path | None = None) -> dict[str, tuple[float, int]]:
     """Map of file path -> (mtime, size) for every file under ``directory``.
 
     Missing directory yields an empty snapshot rather than raising, so the
     caller does not have to special-case a fresh workspace.
     """
+    directory = directory if directory is not None else config.WORKSPACE_DIR
     result: dict[str, tuple[float, int]] = {}
     if not directory.exists():
         return result
@@ -50,6 +52,25 @@ def snapshot(directory: Path = WORKSPACE_DIR) -> dict[str, tuple[float, int]]:
     return result
 
 
+def chat_link_path(path: Path, project_root: Path) -> str:
+    """Chat-pane link path for ``path``.
+
+    Normally "workspace/chart.png" -- the workspace sits inside the project.
+    When SANDBOX_WORKSPACE points outside it, ``relative_to(project_root)``
+    raises and the old fallback emitted the *absolute* path, which
+    ``Artifact.to_markdown`` then turned into "./D:/somewhere/chart.png": a
+    dead link. Keep the familiar workspace-relative shape instead.
+    """
+    try:
+        return path.relative_to(project_root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return f"workspace/{path.relative_to(config.WORKSPACE_DIR.resolve()).as_posix()}"
+    except ValueError:
+        return path.as_posix()
+
+
 def diff(
     before: dict[str, tuple[float, int]],
     after: dict[str, tuple[float, int]],
@@ -61,10 +82,7 @@ def diff(
         if before.get(path_str) == meta:
             continue  # unchanged
         path = Path(path_str)
-        try:
-            rel = path.relative_to(project_root).as_posix()
-        except ValueError:
-            rel = path.as_posix()
+        rel = chat_link_path(path, project_root)
         changed.append(
             Artifact(
                 path=path,

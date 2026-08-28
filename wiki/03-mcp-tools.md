@@ -38,8 +38,9 @@ Run an existing `.py` file from `./workspace` as a script. Added in commit
   its variables/functions are usable in later `execute_python_code` calls.
 - Same output shape as `execute_python_code`.
 - **Isolation:** `file_path` is resolved by `_resolve_workspace_file` and must
-  land **inside** `./workspace`. Accepts `sample.py`, `./workspace/sample.py`,
-  bare names, and absolute paths within the workspace. Paths resolving outside →
+  land **inside** the workspace. Accepts `sample.py`, `./workspace/sample.py`
+  (the prefix is stripped and the rest read as workspace-relative), bare names,
+  and absolute paths within the workspace. Paths resolving outside →
   `execution_status: ERROR` ("outside the workspace"); missing file → ERROR
   ("not found"); a non-`.py` suffix → ERROR ("is not a .py file"), checked
   **before** the kernel is touched.
@@ -112,10 +113,11 @@ wrong one.
 1. **Air-gap:** no `pip`/`apt`/`conda`, no network. Full pre-installed library
    list is enumerated in the description.
 2. **Print results:** only `print()`ed output is returned.
-3. **Plots & reports:** matplotlib → `savefig('./workspace/..png')` + `close()`,
-   never `plt.show()`; plotly → `write_html`; save `.pptx/.pdf/.docx/.html` into
-   `./workspace/`.
-4. **Paths:** read/write under `./workspace/` (relative).
+3. **Plots & reports:** matplotlib → `savefig('chart.png')` + `close()`,
+   never `plt.show()`; plotly → `write_html`; save `.pptx/.pdf/.docx/.html` with
+   plain relative names.
+4. **Paths:** the kernel's working directory **is** the workspace, so read/write
+   with plain relative names (`chart.png`), *not* `./workspace/chart.png`.
 5. **Self-correct:** on stderr error, fix and retry.
 
 ## How to add a new tool (recipe for the next AI)

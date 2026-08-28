@@ -3,17 +3,20 @@
 Run with the dev venv:  ./.devvenv/Scripts/python.exe test_core.py
 """
 
+import os
+import shutil
 import sys
 import time
+from pathlib import Path
 
 import config
-from artifacts import diff, snapshot
+from artifacts import chat_link_path, diff, snapshot
 from kernel_manager import KERNEL
 
 
-def check(name, cond):
+def check(name, cond, detail=""):
     status = "PASS" if cond else "FAIL"
-    print(f"[{status}] {name}")
+    print(f"[{status}] {name}" + (f"  {detail}" if detail and not cond else ""))
     if not cond:
         check.failed += 1
 check.failed = 0
@@ -108,6 +111,65 @@ def check_write_workspace_file():
         pass
 
 
+def check_external_workspace():
+    """Path handling when SANDBOX_WORKSPACE points outside the project.
+
+    That is the configuration the setting exists for -- one workspace shared
+    with a sibling filesystem MCP server, say -- and it was the one that broke.
+    These are pure-function checks: no kernel, no MCP.
+    """
+    import tempfile
+
+    external = Path(tempfile.mkdtemp(prefix="sandbox-ext-ws-"))
+    original = config.WORKSPACE_DIR
+    try:
+        config.WORKSPACE_DIR = external
+
+        # A relative SANDBOX_WORKSPACE must anchor at the project root, not at
+        # whatever cwd the host happened to spawn the server with.
+        anchored = config._env_path("SANDBOX_WORKSPACE", external)
+        os.environ["SANDBOX_WORKSPACE"] = "./relative-ws"
+        try:
+            anchored = config._env_path("SANDBOX_WORKSPACE", external)
+        finally:
+            os.environ.pop("SANDBOX_WORKSPACE", None)
+        check("relative SANDBOX_WORKSPACE anchors at project root",
+              anchored == (config.PROJECT_ROOT / "relative-ws").resolve(), anchored)
+
+        # Chat links stay workspace-relative instead of leaking an absolute path.
+        link = chat_link_path(external / "chart.png", config.PROJECT_ROOT)
+        check("external artifact link is not absolute",
+              link == "workspace/chart.png", link)
+
+        try:
+            import server
+        except ImportError as exc:
+            print(f"[SKIP] external workspace: server import failed ({exc})")
+            return
+
+        (external / "sample.py").write_text("print('ran')", encoding="utf-8")
+        for given in ("sample.py", "./workspace/sample.py", "workspace/sample.py"):
+            resolved, err = server._resolve_workspace_file(given)
+            check(f"external: resolves {given!r}",
+                  resolved == (external / "sample.py").resolve(), resolved or err)
+
+        # A same-named file in the project's own ./workspace must not win, and
+        # must not produce a bogus "resolves outside the workspace" refusal.
+        stale_dir = config.PROJECT_ROOT / "workspace"
+        stale_dir.mkdir(exist_ok=True)
+        stale = stale_dir / "sample.py"
+        stale.write_text("print('STALE')", encoding="utf-8")
+        try:
+            resolved, err = server._resolve_workspace_file("./workspace/sample.py")
+            check("external: stale project-local file does not win",
+                  resolved == (external / "sample.py").resolve(), resolved or err)
+        finally:
+            stale.unlink(missing_ok=True)
+    finally:
+        config.WORKSPACE_DIR = original
+        shutil.rmtree(external, ignore_errors=True)
+
+
 def main():
     config.ensure_workspace()
     print(f"Kernel python: {config.KERNEL_PYTHON}")
@@ -136,7 +198,7 @@ def main():
     # 5. artifact interception: create a file, ensure diff finds it
     before = snapshot()
     KERNEL.execute(
-        "open('workspace/_smoke_artifact.txt','w').write('generated')"
+        "open('_smoke_artifact.txt','w').write('generated')"
     )
     after = snapshot()
     arts = diff(before, after, config.PROJECT_ROOT)
@@ -151,7 +213,7 @@ def main():
     r = KERNEL.execute(
         "import matplotlib.pyplot as plt\n"
         "plt.plot([1,2,3],[3,1,2]); plt.title('t')\n"
-        "plt.savefig('workspace/_smoke_chart.png'); plt.close()\n"
+        "plt.savefig('_smoke_chart.png'); plt.close()\n"
         "print('saved')"
     )
     after = snapshot()
@@ -174,10 +236,23 @@ def main():
     r = KERNEL.execute("print('alive after timeout')")
     check("kernel survives timeout", "alive after timeout" in r.stdout)
 
+    # 9. the kernel works INSIDE the workspace, wherever that is.
+    #    The kernel used to be started with cwd=PROJECT_ROOT, so a
+    #    relative path in executed code went to the server's own directory as
+    #    soon as SANDBOX_WORKSPACE pointed anywhere else -- while every tool
+    #    kept using SANDBOX_WORKSPACE. Files written by the model vanished.
+    r = KERNEL.execute("import os; print(os.getcwd())")
+    check("kernel cwd is the workspace",
+          Path(r.stdout.strip()).resolve() == config.WORKSPACE_DIR.resolve(),
+          )
+
     KERNEL.shutdown()
 
-    # 9. write_workspace_file: pure-function checks, no kernel needed.
+    # 10. write_workspace_file: pure-function checks, no kernel needed.
     check_write_workspace_file()
+
+    # 11. path handling when the workspace lives outside the project.
+    check_external_workspace()
     print()
     if check.failed:
         print(f"{check.failed} check(s) FAILED")
