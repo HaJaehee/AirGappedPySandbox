@@ -1,15 +1,18 @@
 {
-  "_comment": "AnythingLLM MCP 서버 설정. 아래 <BASE> 를 이 패키지의 압축 해제 위치로 바꾸세요(예: D:\\AirGappedPySandbox). 이 패키지 구조는 <BASE>\\WPy64-313130\\python\\python.exe (포터블 Python) 과 <BASE>\\mcp-server\\server.py (서버 코드) 입니다. AnythingLLM 의 MCP 설정 파일(Settings > Agent Skills > MCP Servers, 또는 ~/AnythingLLM/plugins/anythingllm_mcp_servers.json)에 붙여넣고 경로 수정 후 에이전트를 재시작하세요.",
+  "_comment": "AnythingLLM MCP server config. Copy this block into AnythingLLM's MCP servers file (Settings > Agent Skills > MCP Servers, or ~/AnythingLLM/plugins/anythingllm_mcp_servers.json). Adjust the two absolute paths for your machine, then restart the AnythingLLM agent.",
+  "_comment_pip": "SANDBOX_PIP_INDEX_URL is what install_python_packages installs from. Leave it out and pip falls back to the public PyPI, which a closed network cannot reach, so every install fails. Add SANDBOX_PIP_TRUSTED_HOST (host name only) when the mirror is plain http -- without it pip silently ignores the index and reports the package as missing. Verify with: python check_environment.py",
   "mcpServers": {
     "air-gapped-python-sandbox": {
-      "command": "D:\\AirGappedPySandbox\\WPy64-313130\\python\\python.exe",
+      "command": "C:\\path\\to\\portable-python\\python.exe",
       "args": [
-        "D:\\AirGappedPySandbox\\mcp-server\\server.py"
+        "C:\\Users\\loves\\AirGappedPySandbox\\server.py"
       ],
       "env": {
-        "SANDBOX_KERNEL_PYTHON": "D:\\AirGappedPySandbox\\WPy64-313130\\python\\python.exe",
-        "SANDBOX_WORKSPACE": "D:\\AirGappedPySandbox\\mcp-server\\workspace",
-        "SANDBOX_EXEC_TIMEOUT": "60"
+        "SANDBOX_KERNEL_PYTHON": "C:\\path\\to\\portable-python\\python.exe",
+        "SANDBOX_WORKSPACE": "C:\\Users\\loves\\AirGappedPySandbox\\workspace",
+        "SANDBOX_EXEC_TIMEOUT": "60",
+        "SANDBOX_PIP_INDEX_URL": "http://pypi-mirror.your-company.local/simple",
+        "SANDBOX_PIP_TRUSTED_HOST": "pypi-mirror.your-company.local"
       }
     }
   }

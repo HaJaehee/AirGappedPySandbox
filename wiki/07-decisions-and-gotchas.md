@@ -54,6 +54,32 @@ Cost: one extra kernel round-trip per execution, to drain the ledger. Risk to
 watch: over-alarming. `RAN_WITH_ERRORS` is worded as "check before reporting",
 not "failed", so a stray `logging.error` cannot push a model into a retry loop.
 
+### Installs go in a side venv, and a failed install says so (v0.6.0)
+
+The intranet gained a PyPI mirror, so `install_python_packages` exists. Two
+decisions shape it.
+
+**Where.** Packages land in `SANDBOX_VENV` (default `./.sandbox-venv`), a venv
+built from `KERNEL_PYTHON` with `--system-site-packages`, which the kernel picks
+up with `site.addsitedir`. The 4 GB portable distribution is never written to,
+so it stays byte-identical to what was packaged and a bad install is undone by
+deleting one directory. The venv must **not** live in the workspace: the
+artifact interceptor diffs that tree after every execution and would report
+thousands of installed files as new artifacts. `addsitedir` *appends*, so a
+package that also exists in the base install keeps winning — this tool adds
+packages, it does not upgrade the curated stack.
+
+**Telling failures apart.** `PIP_RETRIES` defaults to 0 so an unreachable mirror
+fails in a second instead of stalling for minutes — but with retries off pip
+prints *nothing* about the connection, and an unreachable index is textually
+identical to a missing package ("No matching distribution found"). Worse, a
+plain-http mirror without `--trusted-host` is **silently discarded** by pip,
+which then reports the same thing. Guessing from pip's output therefore blames
+the package name for what is a settings mistake. So `pip_installer.diagnose()`
+probes the index itself (`probe_index`) and resolves the URL pip will really use
+(`effective_index`), and each failure names the setting to change.
+`check_environment.py` reports the same thing before any conversation starts.
+
 ## Windows / offline gotchas
 
 - **Blocking `time.sleep` is NOT interruptible on Windows.** The interrupt event

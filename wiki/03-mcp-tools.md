@@ -65,6 +65,37 @@ Run an existing `.py` file from `./workspace` as a script. Added in commit
   ("not found"); a non-`.py` suffix → FAILED ("is not a .py file"), checked
   **before** the kernel is touched.
 
+## `install_python_packages(packages: str, namespace: str) -> str`
+
+Install distributions from the company's intranet PyPI mirror. Added in v0.6.0.
+
+- `packages` is **one free-form string**, not a list: names separated by spaces
+  or commas, each optionally carrying a version specifier
+  (`"polars, rapidfuzz>=3.0"`). A small model writes that far more reliably than
+  a JSON array.
+- Anything that is not a requirement specifier — URLs, file paths, `-e`, pip
+  flags — is rejected by name before pip runs. The model picks packages; the
+  server picks every other pip argument, including the index.
+- Packages go into `config.VENV_DIR` (a venv built from `KERNEL_PYTHON` with
+  `--system-site-packages`), **never** into the bundled portable Python. Undo
+  every install ever made by deleting that one directory.
+- After a successful install the venv's `site-packages` is added to **every live
+  kernel** via `site.addsitedir` — no restart, so other conversations keep their
+  loaded dataframes.
+- `install_status: INSTALLED` means the **kernel itself** reported a version for
+  each distribution (`importlib.metadata`), not merely that pip exited 0. A pip
+  success that is not importable is reported as `FAILED`, for the same reason
+  `execution_status` has no `SUCCESS` value (see `11`).
+- `install_status: FAILED` always carries a `--- why it failed ---` sentence.
+  The three cases worth knowing, all of them the user's to fix:
+  | what happened | how it is detected |
+  |---|---|
+  | the index cannot be reached | `probe_index()` — **not** pip's output, which says nothing about it when retries are off |
+  | pip dropped a plain-http index as untrusted | pip's "is not a trusted or secure host" warning → tells the user to set `SANDBOX_PIP_TRUSTED_HOST` |
+  | index reachable, package genuinely absent | not-found markers **and** a successful probe |
+- Short-circuit: if every requested name is bare (no version pin) and already
+  importable, pip is not run at all.
+
 ## `write_workspace_file(filename: str, content: str, overwrite: bool = False) -> str`
 
 Write `content` verbatim into `./workspace`. **Does not execute anything and

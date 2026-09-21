@@ -21,3 +21,4 @@ __pycache__/
 # Runtime I/O — keep the folder, ignore its contents
 workspace/*
 !workspace/.gitkeep
+.sandbox-venv/

@@ -47,7 +47,7 @@ def _env_int(name: str, default: int) -> int:
 
 # Single source of truth for the project version. Keep in sync with the version
 # history table in README.md. The server reports this over MCP (serverInfo).
-VERSION: str = "0.5.0"
+VERSION: str = "0.6.0"
 
 # Project root = directory containing this file. The kernel's working directory
 # is set here so that the "./workspace/..." relative paths used by the LLM
@@ -77,6 +77,37 @@ MAX_STREAM_CHARS: int = _env_int("SANDBOX_MAX_STREAM_CHARS", 20000)
 # is text the model itself emitted, so its own context window keeps it far below
 # this; the cap only bounds a runaway loop. 0 disables the cap.
 MAX_WRITE_BYTES: int = _env_int("SANDBOX_MAX_WRITE_BYTES", 1_048_576)  # 1 MB
+
+# --- pip installs into a side venv ------------------------------------------
+# The host network carries an intranet PyPI mirror, so missing packages can be
+# installed on demand -- but never into the curated portable Python. They go
+# into VENV_DIR, a venv created from KERNEL_PYTHON with --system-site-packages,
+# which the kernel adds to sys.path. Deleting that one directory undoes every
+# install the model ever made.
+#
+# Deliberately NOT inside the workspace: the artifact interceptor diffs that
+# tree after every execution and would report thousands of installed files as
+# new artifacts.
+VENV_DIR: Path = _env_path("SANDBOX_VENV", PROJECT_ROOT / ".sandbox-venv")
+
+# The intranet PyPI mirror. Left empty, pip uses its own configuration (pip.ini
+# / PIP_INDEX_URL) -- which on an unconfigured host means it reaches for the
+# public PyPI and fails. Set this and the failure mode disappears.
+PIP_INDEX_URL: str = os.environ.get("SANDBOX_PIP_INDEX_URL", "").strip()
+# Needed when the mirror is plain http, or https with an internal CA.
+PIP_TRUSTED_HOST: str = os.environ.get("SANDBOX_PIP_TRUSTED_HOST", "").strip()
+
+# Ceiling on one install, and on pip's own wait for the index. PIP_RETRIES is 0
+# on purpose: pip's default of 5 retries with backoff turns "no mirror
+# configured" into a multi-minute stall before it admits defeat, and a model
+# waiting that long reads the timeout as a transient glitch and tries again.
+PIP_TIMEOUT: int = _env_int("SANDBOX_PIP_TIMEOUT", 300)
+PIP_NETWORK_TIMEOUT: int = _env_int("SANDBOX_PIP_NETWORK_TIMEOUT", 15)
+PIP_RETRIES: int = _env_int("SANDBOX_PIP_RETRIES", 0)
+VENV_CREATE_TIMEOUT: int = _env_int("SANDBOX_VENV_CREATE_TIMEOUT", 180)
+
+# Bounds one install call, so a confused model cannot ask for a hundred names.
+MAX_PACKAGES_PER_CALL: int = _env_int("SANDBOX_MAX_PACKAGES_PER_CALL", 20)
 
 # --- Per-conversation namespace routing -------------------------------------
 # Every code execution runs in a namespace-scoped kernel so that separate

@@ -1,6 +1,6 @@
 # 에어갭 Python 샌드박스 — MCP 서버
 
-**버전: v0.5.0** ([변경 이력](#버전-이력))
+**버전: v0.6.0** ([변경 이력](#버전-이력))
 
 MCP(Model Context Protocol)를 통해 LLM에 노출되는 **상태 유지형(stateful) 오프라인 Python 코드 인터프리터**입니다.
 사내/기업용 LLM(AnythingLLM 에이전트 경유)이 수학 계산, 데이터 분석, 차트 생성, 문서 파싱을 위해
@@ -73,6 +73,15 @@ IPython 커널  ← 4GB 포터블 Python으로 실행됨
   `namespace`도 필요 없습니다. 파일을 만들기 위해 "파일을 쓰는 파이썬 코드"를 다시 생성할 필요가 없어,
   작은 모델이 가장 자주 실패하는 자기참조 패턴을 피할 수 있습니다. 경로는 `./workspace` 안으로 강제되며
   (`..`·절대 경로·Windows 예약 장치명 거부), 기존 파일은 `overwrite=true` 없이는 덮어쓰지 않습니다.
+- **`install_python_packages(packages: str, namespace: str)`** — 사내 PyPI 미러에서 패키지를 설치합니다.
+  `packages`는 공백/쉼표로 구분한 배포판 이름이며 버전 지정도 됩니다(`"polars, rapidfuzz>=3.0"`).
+  URL·경로·editable·pip 플래그는 거부하고, 인덱스를 비롯한 pip 옵션은 서버가 고정합니다. 설치 위치는
+  **번들된 포터블 Python이 아니라 별도 venv**(`SANDBOX_VENV`)이며, 커널 재시작 없이 모든 활성
+  네임스페이스에서 즉시 import할 수 있게 됩니다(로드해 둔 데이터가 살아남습니다). 응답은
+  `install_status: INSTALLED` 또는 `FAILED`로 시작하고, `INSTALLED`는 pip의 종료 코드가 아니라
+  **커널이 직접 해당 배포판의 버전을 확인**했다는 뜻입니다. 실패하면 원인을 한 문장으로 알려줍니다 —
+  가장 흔한 원인인 "이 PC에 미러가 설정되지 않음"은 인덱스에 직접 접속해 확인한 뒤 고칠 설정 이름을
+  짚어 줍니다.
 - **`list_workspace_files()`** — `./workspace`의 업로드/출력 파일을 크기와 형식과 함께 나열합니다(모든
   네임스페이스가 공유).
 - **`reset_kernel_state(namespace: str)`** — 지정한 네임스페이스의 커널만 재시작하여 그 대화의 메모리 상태를
@@ -169,6 +178,13 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 | `SANDBOX_NS_IDLE_TIMEOUT` | `1800` | 유휴 네임스페이스 커널 회수까지의 시간(초). |
 | `SANDBOX_MAX_NAMESPACES` | `8` | 동시 유지 네임스페이스 커널 수 상한(초과 시 LRU 회수). |
 | `SANDBOX_LAZY_START` | 미설정 | 참(truthy)이면 시작 시 예열용 커널을 미리 부팅하지 않음. |
+| `SANDBOX_PIP_INDEX_URL` | 미설정 | **사내 PyPI 미러 주소**(`http://pypi.사내/simple`). 설정하지 않으면 pip 자체 설정(pip.ini)이나 공개 PyPI로 떨어져 폐쇄망에서는 설치가 실패합니다. |
+| `SANDBOX_PIP_TRUSTED_HOST` | 미설정 | 미러가 평문 http이거나 사내 CA를 쓸 때의 호스트명. 없으면 pip가 그 인덱스를 **조용히 무시**합니다. |
+| `SANDBOX_VENV` | `./.sandbox-venv` | 설치된 패키지가 들어가는 venv. 이 디렉터리만 지우면 설치 내역이 전부 되돌아갑니다. |
+| `SANDBOX_PIP_TIMEOUT` | `300` | 설치 1회 상한(초). |
+| `SANDBOX_PIP_NETWORK_TIMEOUT` | `15` | pip가 인덱스를 기다리는 시간(초). |
+| `SANDBOX_PIP_RETRIES` | `0` | pip 재시도 횟수. 기본 0은 미러 미설정 시 몇 분씩 멈추지 않고 즉시 실패시키기 위함입니다. |
+| `SANDBOX_MAX_PACKAGES_PER_CALL` | `20` | 한 번의 설치 호출에서 받을 패키지 수 상한. |
 
 ## 사용자가 샌드박스에 파일을 넣는 방법
 
@@ -209,7 +225,8 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 
 | 버전 | 변경 내용 |
 |------|-----------|
-| **v0.5.0** | 실행 판정 개편: 'SUCCESS' 제거, 예외 없이 실패하는 경우(스레드 크래시·subprocess 비정상 종료·삼켜진 트레이스백) 탐지, sys.exit(0) 오판 수정, run_python_file 상태 보존 |
+| **v0.6.0** | install_python_packages 도구 추가: 사내 PyPI 미러에서 별도 venv로 설치, 커널이 직접 import 확인, 미러 미설정/도달 불가/평문 http 무시를 구분해 실패 보고 |
+| v0.5.0 | 실행 판정 개편: 'SUCCESS' 제거, 예외 없이 실패하는 경우(스레드 크래시·subprocess 비정상 종료·삼켜진 트레이스백) 탐지, sys.exit(0) 오판 수정, run_python_file 상태 보존 |
 | v0.4.1 | 워크스페이스 경로 처리 수정 — 커널의 작업 디렉터리를 `SANDBOX_WORKSPACE`(프로젝트 밖이어도) 안으로 이동해, 코드는 `./workspace/` 접두사 없이 단순 상대 경로를 사용합니다. 상대값 `SANDBOX_WORKSPACE`는 호스트 cwd가 아닌 프로젝트 루트 기준으로 해석. `run_python_file`의 `./workspace/x.py` 해석과 채팅 링크 경로가 프로젝트 외부 워크스페이스에서도 정상 동작. |
 | v0.4.0 | `write_workspace_file` 도구 추가 — 텍스트/코드를 코드 실행 없이 `./workspace`에 그대로 저장(경로 격리·덮어쓰기 보호·크기 상한). 작은 모델이 실패하던 '자기 소스를 인용하는 파이썬 생성' 패턴 제거. `run_python_file`은 이제 `.py`가 아닌 파일을 커널에 넘기기 전에 거부. |
 | v0.3.0 | 대화별 **네임스페이스 라우팅**(필수 `namespace` 인자) 도입 — 한 서버 프로세스를 공유하는 여러 AnythingLLM 대화의 변수 충돌 방지. 네임스페이스별 커널 풀(웜 리저브·유휴 회수·LRU 상한), 응답 배너 되울림, 미래 `_meta` 대화 id 훅. |

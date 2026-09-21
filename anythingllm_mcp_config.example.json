@@ -1,5 +1,6 @@
 {
   "_comment": "AnythingLLM MCP server config. Copy this block into AnythingLLM's MCP servers file (Settings > Agent Skills > MCP Servers, or ~/AnythingLLM/plugins/anythingllm_mcp_servers.json). Adjust the two absolute paths for your machine, then restart the AnythingLLM agent.",
+  "_comment_pip": "SANDBOX_PIP_INDEX_URL is what install_python_packages installs from. Leave it out and pip falls back to the public PyPI, which a closed network cannot reach, so every install fails. Add SANDBOX_PIP_TRUSTED_HOST (host name only) when the mirror is plain http -- without it pip silently ignores the index and reports the package as missing. Verify with: python check_environment.py",
   "mcpServers": {
     "air-gapped-python-sandbox": {
       "command": "C:\\path\\to\\portable-python\\python.exe",
@@ -9,7 +10,9 @@
       "env": {
         "SANDBOX_KERNEL_PYTHON": "C:\\path\\to\\portable-python\\python.exe",
         "SANDBOX_WORKSPACE": "C:\\Users\\loves\\AirGappedPySandbox\\workspace",
-        "SANDBOX_EXEC_TIMEOUT": "60"
+        "SANDBOX_EXEC_TIMEOUT": "60",
+        "SANDBOX_PIP_INDEX_URL": "http://pypi-mirror.your-company.local/simple",
+        "SANDBOX_PIP_TRUSTED_HOST": "pypi-mirror.your-company.local"
       }
     }
   }

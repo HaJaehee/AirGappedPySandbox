@@ -89,12 +89,17 @@ Output Schema:
 write_status (string): "SUCCESS" or "ERROR".
 file (string): Path, byte size, line count.
 artifacts (array of strings): Markdown link to the written file.
-NOTE — as-built tool set: the shipped server exposes five tools. Beyond the three above it adds run_python_file (run an existing ./workspace .py file as a script) and reset_kernel_state (restart one namespace's kernel). The execution tools also take a mandatory `namespace` argument for per-conversation isolation; see wiki/03-mcp-tools.md and wiki/09-namespace-routing.md for the authoritative interfaces.
+NOTE — as-built tool set: the shipped server exposes six tools. Beyond the three above it adds run_python_file (run an existing ./workspace .py file as a script), install_python_packages (install from the intranet PyPI mirror into a side venv, verified by the kernel itself) and reset_kernel_state (restart one namespace's kernel). The execution tools also take a mandatory `namespace` argument for per-conversation isolation; see wiki/03-mcp-tools.md and wiki/09-namespace-routing.md for the authoritative interfaces.
 5. Prompt Engineering & System Rule Injection (Tool Description)
 To guarantee that the LLM utilizes the sandbox effectively without raising errors, the MCP tool description and system instructions injected into the LLM must strictly enforce the following rules:
 
-Air-Gap Strictness:
-"Do NOT attempt to install packages using pip, apt, or conda. The environment is air-gapped. All necessary libraries (pandas, numpy, sympy, pdfplumber, openpyxl, matplotlib, seaborn, lxml, etc.) are pre-installed."
+Air-Gap Strictness (AMENDED in v0.6.0 — the intranet now has a PyPI mirror):
+"Do NOT run pip, apt or conda from inside the code you execute, and make no
+network calls. The listed libraries (pandas, numpy, sympy, pdfplumber, openpyxl,
+matplotlib, seaborn, lxml, etc.) are pre-installed. If you need one that is NOT
+pre-installed, call the install_python_packages tool — it is the only supported
+way to add a package, it installs from the company mirror into a side venv, and
+it tells you plainly when it could not."
 Mandatory Explicit Printing:
 "The IPython kernel returns only what is explicitly printed. ALWAYS wrap final results, data summaries, and calculated values inside print() statements."
 Non-Interactive Graphics Rule:

@@ -81,6 +81,41 @@
     <output type="text" desc="human/LLM-readable listing"/>
   </tool>
 
+  <tool name="install_python_packages" stateful="false" executes="false" addedIn="0.6.0">
+    <description>Install distributions from the company's intranet PyPI mirror into a side venv, so later execute_python_code calls can import them. INSTALLED means the KERNEL confirmed each distribution via importlib.metadata -- not merely that pip exited 0.</description>
+    <input>
+      <param name="packages" type="string" required="true">One free-form string: distribution names separated by spaces or commas, each optionally with a version specifier ("polars, rapidfuzz&gt;=3.0"). A single string, not a list, because small models produce it far more reliably than a JSON array.</param>
+      <param name="namespace" type="string" required="true">Conversation namespace; see namespaceParam.</param>
+    </input>
+    <output type="text">
+      <field name="install_status" values="INSTALLED|FAILED" desc="FIRST line, followed by a one-line explanation"/>
+      <section name="packages" desc="each distribution with the version the kernel reports; '(already available)' when it was there before"/>
+      <section name="why it failed" desc="on FAILED: one sentence naming what the USER has to fix"/>
+      <section name="pip output" desc="on FAILED: tail of pip's own output"/>
+      <section name="pip" desc="effective index URL and where it came from, venv path, elapsed time, pip exit code"/>
+      <field name="next_action" desc="LAST line; on failure it says NOT to repeat the install"/>
+    </output>
+    <installTarget>
+      <rule>config.VENV_DIR, a venv created from KERNEL_PYTHON with --system-site-packages. The bundled portable Python is never modified.</rule>
+      <rule>Never inside ./workspace: the artifact interceptor diffs that tree and would report every installed file as a new artifact.</rule>
+      <rule>After a successful install the venv site-packages is added to EVERY live kernel via site.addsitedir -- no restart, so other conversations keep their loaded data.</rule>
+      <rule>addsitedir appends, so a package that also exists in the base install keeps winning: this tool adds packages, it does not upgrade the curated stack.</rule>
+    </installTarget>
+    <isolation>
+      <rule>Only PEP 508 requirement specifiers are accepted; the model chooses packages, the server chooses every other pip argument.</rule>
+      <error condition="URL, file path, editable install or pip flag">install_status: FAILED before pip runs, message names the rejected token</error>
+      <error condition="no package named">install_status: FAILED</error>
+      <error condition="more than SANDBOX_MAX_PACKAGES_PER_CALL packages">install_status: FAILED, message contains "limit is"</error>
+    </isolation>
+    <failureDiagnosis note="With SANDBOX_PIP_RETRIES=0 pip prints NOTHING about an unreachable index, so its text alone cannot tell these apart. diagnose() probes the index instead.">
+      <case condition="index unreachable">probe_index() fails -&gt; names SANDBOX_PIP_INDEX_URL; if the effective index is the public PyPI, says outright that no mirror is configured on this machine</case>
+      <case condition="plain-http index dropped by pip as untrusted">pip's "is not a trusted or secure host" warning -&gt; names SANDBOX_PIP_TRUSTED_HOST</case>
+      <case condition="package genuinely absent">not-found markers AND a successful probe -&gt; points at the distribution name (often not the import name) or the mirror's contents</case>
+      <case condition="pip exited 0 but the kernel cannot see the package">install_status: FAILED, because pip's exit code proves a download, not an import</case>
+    </failureDiagnosis>
+    <timeout envVar="SANDBOX_PIP_TIMEOUT" defaultSeconds="300"/>
+  </tool>
+
   <tool name="reset_kernel_state" stateful="false" destructive="memory-only">
     <description>Restart ONE namespace's kernel, clearing that conversation's in-memory state. Workspace files kept; other namespaces untouched.</description>
     <input>

@@ -324,6 +324,97 @@ def check_response_shape():
           out.splitlines()[-1].startswith("next_action:"))
 
 
+def check_pip_installer():
+    """Package installs, and -- the point of the feature -- honest failures.
+
+    Nothing here downloads a package. The install that runs is aimed at a
+    hostname reserved by RFC 2606 to never resolve, which is precisely the
+    shape of the failure this has to report well: a machine whose mirror is
+    not configured or not reachable.
+    """
+    import tempfile
+
+    try:
+        import pip_installer
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] pip installer checks (import failed: {exc})")
+        return
+
+    # 1. Request parsing: names in, everything else out.
+    ok, bad = pip_installer.parse_requests("polars, rapidfuzz>=3.0 numpy==2.1")
+    check("pip: accepts names, versions, commas and spaces",
+          ok == ["polars", "rapidfuzz>=3.0", "numpy==2.1"] and not bad, ok)
+    ok, bad = pip_installer.parse_requests(
+        "polars --index-url=http://evil -e . ../x.whl https://h/x.tar.gz")
+    check("pip: refuses flags, editables, paths and URLs",
+          ok == ["polars"] and len(bad) == 5, (ok, bad))
+    check("pip: distribution name is extracted from a specifier",
+          pip_installer.dist_name("polars[all]>=1.0,<2") == "polars")
+
+    # 2. An index that cannot resolve is NOT reachable, and one that answers is.
+    reachable, _ = pip_installer.probe_index(
+        "https://sandbox-mirror.invalid/simple", 5)
+    check("pip: probe_index reports an unresolvable host as unreachable",
+          reachable is False)
+
+    # 3. A configured-but-unreachable mirror must be blamed on the mirror.
+    original = (config.VENV_DIR, config.PIP_INDEX_URL, config.PIP_TRUSTED_HOST)
+    tmp = Path(tempfile.mkdtemp(prefix="sandbox-test-venv-"))
+    try:
+        config.VENV_DIR = tmp / "venv"
+        config.PIP_INDEX_URL = "https://sandbox-mirror.invalid/simple"
+        config.PIP_TRUSTED_HOST = ""
+        report = pip_installer.install(["some-internal-lib"])
+        check("pip: install against an unreachable mirror fails", not report.ok,
+              f"returncode={report.returncode} error={report.error!r}")
+        check("pip: the venv is created next to the server, not in the workspace",
+              pip_installer.venv_python().is_file())
+        why = pip_installer.diagnose(report)
+        check("pip: an unreachable mirror is diagnosed as unreachable",
+              "cannot reach" in why and "SANDBOX_PIP_INDEX_URL" in why, why[:200])
+
+        # 4. The plain-http trap: pip drops the index and reports "not found".
+        fake = pip_installer.InstallReport(
+            returncode=1,
+            index_url="http://mirror.corp.local/simple",
+            index_origin="SANDBOX_PIP_INDEX_URL",
+            output="WARNING: The repository located at mirror.corp.local is not "
+                   "a trusted or secure host and is being ignored.\n"
+                   "ERROR: No matching distribution found for polars",
+        )
+        why = pip_installer.diagnose(fake)
+        check("pip: an ignored http index blames the setting, not the package",
+              "SANDBOX_PIP_TRUSTED_HOST" in why and "mirror.corp.local" in why,
+              why[:200])
+
+        # 5. With no mirror configured, the reported index is the public PyPI --
+        #    which is the clue the user needs when it then fails.
+        config.PIP_INDEX_URL = ""
+        url, origin = pip_installer.effective_index()
+        check("pip: an unconfigured host resolves to a default index",
+              url.startswith("http"), (url, origin))
+    finally:
+        config.VENV_DIR, config.PIP_INDEX_URL, config.PIP_TRUSTED_HOST = original
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # 6. The tool refuses bad input before pip, and before touching a kernel.
+    out = server.install_python_packages("polars --index-url=http://evil", "_smoke_pip")
+    check("install tool: refuses pip flags",
+          out.startswith("install_status: FAILED") and "--index-url=http://evil" in out,
+          out[:160])
+    out = server.install_python_packages("   ", "_smoke_pip")
+    check("install tool: refuses an empty request",
+          out.startswith("install_status: FAILED"), out[:160])
+    out = server.install_python_packages(
+        " ".join(f"pkg{i}" for i in range(config.MAX_PACKAGES_PER_CALL + 1)),
+        "_smoke_pip")
+    check("install tool: enforces the per-call package limit",
+          out.startswith("install_status: FAILED") and "limit is" in out, out[:160])
+    check("install tool: a refusal still ends with an instruction",
+          out.splitlines()[-1].startswith("next_action:"))
+
+
 def main():
     config.ensure_workspace()
     print(f"Kernel python: {config.KERNEL_PYTHON}")
@@ -414,6 +505,9 @@ def main():
     # 13. response shape (pure) and script semantics (boots a pooled kernel).
     check_response_shape()
     check_run_python_file()
+
+    # 14. package installs and, above all, how their failures are reported.
+    check_pip_installer()
     print()
     if check.failed:
         print(f"{check.failed} check(s) FAILED")

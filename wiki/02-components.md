@@ -19,6 +19,14 @@ All configuration in one place. Reads env vars, falls back to sane defaults.
 | `STARTUP_TIMEOUT` | `SANDBOX_STARTUP_TIMEOUT` | `60` | Kernel boot timeout (s). |
 | `MAX_STREAM_CHARS` | `SANDBOX_MAX_STREAM_CHARS` | `20000` | Cap on returned stdout/stderr (0 = unlimited). |
 | `MAX_WRITE_BYTES` | `SANDBOX_MAX_WRITE_BYTES` | `1048576` | Cap on one `write_workspace_file` call (0 = unlimited). |
+| `VENV_DIR` | `SANDBOX_VENV` | `PROJECT_ROOT/.sandbox-venv` | Where `install_python_packages` puts packages. **Never inside the workspace** — the artifact interceptor diffs that tree and would report every installed file. |
+| `PIP_INDEX_URL` | `SANDBOX_PIP_INDEX_URL` | *(unset)* | The intranet PyPI mirror. Unset means pip falls back to pip.ini / the public PyPI, i.e. installs fail on a closed network. |
+| `PIP_TRUSTED_HOST` | `SANDBOX_PIP_TRUSTED_HOST` | *(unset)* | Needed for a plain-http mirror; without it pip **silently ignores** the index. |
+| `PIP_TIMEOUT` | `SANDBOX_PIP_TIMEOUT` | `300` | Ceiling on one install (s). |
+| `PIP_NETWORK_TIMEOUT` | `SANDBOX_PIP_NETWORK_TIMEOUT` | `15` | How long pip waits on the index (s). |
+| `PIP_RETRIES` | `SANDBOX_PIP_RETRIES` | `0` | pip retries. 0 so a misconfigured host fails in a second, not minutes. |
+| `VENV_CREATE_TIMEOUT` | `SANDBOX_VENV_CREATE_TIMEOUT` | `180` | Ceiling on creating the venv (s). |
+| `MAX_PACKAGES_PER_CALL` | `SANDBOX_MAX_PACKAGES_PER_CALL` | `20` | Bounds one install call. |
 | `IMAGE_EXTENSIONS` | — | png/jpg/jpeg/gif/svg/webp/bmp | Which artifacts render as inline images. |
 | `ensure_workspace()` | — | — | Creates and returns `WORKSPACE_DIR`. |
 
@@ -49,6 +57,30 @@ All configuration in one place. Reads env vars, falls back to sane defaults.
 - **`ExecResult`** dataclass — `stdout, stderr, status ('SUCCESS'|'ERROR'|
   'TIMEOUT'), result_repr, error_name, state_reset`.
 - **`KERNEL`** — process-wide singleton `StatefulKernel()` imported by `server`.
+
+## `pip_installer.py` — installs from the intranet mirror
+
+Everything `install_python_packages` needs, and nothing that touches MCP.
+
+- **`parse_requests(raw)`** — splits a free-form string on commas/whitespace and
+  keeps only PEP 508 requirement specifiers. URLs, paths, `-e` and pip flags are
+  returned as *rejected*: the model chooses packages, never pip's arguments.
+- **`ensure_venv()` / `site_packages_dir()`** — the venv is created from
+  `KERNEL_PYTHON` with `--system-site-packages`, so the curated 4 GB stack stays
+  visible and pip does not re-download it. `site_packages_dir()` resolves by
+  directory layout, not by running the interpreter: it is called on every kernel
+  start-up.
+- **`effective_index()`** — the URL pip will *really* use: `SANDBOX_PIP_INDEX_URL`,
+  else `pip config list`, else `PIP_INDEX_URL`, else the public PyPI. Reporting
+  that URL is usually enough for a user to spot an unconfigured host.
+- **`probe_index(url)` / `diagnose(report)`** — **read this before touching the
+  failure paths.** With `PIP_RETRIES=0`, pip prints *nothing* about an
+  unreachable index: a mirror that does not resolve and a package that is not on
+  the mirror both come back as "No matching distribution found". So `diagnose`
+  stops reading pip's text and asks the index itself. Three outcomes are
+  distinguished, each naming the setting to fix: index unreachable, index
+  silently dropped because it is plain http and untrusted, and index reachable
+  but without that package.
 
 ## `artifacts.py` — the artifact interceptor
 
@@ -97,7 +129,10 @@ filesystem-watcher thread.
 
 Runs against `config.KERNEL_PYTHON`. Probes REQUIRED + OPTIONAL packages via a
 subprocess `importlib.util.find_spec`, then actually boots a kernel and runs one
-statement. Exit 0 = `RESULT: PASS`. REQUIRED misses are fatal (no pip on host).
+statement. Exit 0 = `RESULT: PASS`. REQUIRED misses are fatal — the base stack
+belongs in the portable Python, not in the mirror, which may be unreachable when
+it matters. It also reports the effective package index and whether this machine
+can reach it (a warning, never fatal).
 
 ## `test_core.py` — smoke tests (no MCP needed)
 

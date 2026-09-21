@@ -38,6 +38,7 @@ from jupyter_client.kernelspec import KernelSpec
 from jupyter_client.manager import KernelManager
 
 import config
+import pip_installer
 
 # Matches ANSI colour escapes IPython injects into tracebacks.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -193,6 +194,57 @@ except Exception:
     pass
 """ % _PROBE_SENTINEL
 
+_PKG_SENTINEL = "@@SANDBOX_PKGS@@"
+
+
+def _site_dir_code(site_dir: str) -> str:
+    """Make a directory importable in a running kernel, with no restart.
+
+    A restart would wipe the dataframes the conversation is working with, so a
+    freshly pip-installed package has to be reachable without one.
+    """
+    return (
+        "try:\n"
+        "    import site as _sb_site, sys as _sb_sys, importlib as _sb_il\n"
+        f"    _sb_dir = {site_dir!r}\n"
+        "    if _sb_dir not in _sb_sys.path:\n"
+        "        _sb_site.addsitedir(_sb_dir)\n"
+        "    _sb_il.invalidate_caches()\n"
+        "    for _sb_k in ('_sb_site', '_sb_sys', '_sb_il', '_sb_dir'):\n"
+        "        globals().pop(_sb_k, None)\n"
+        "    globals().pop('_sb_k', None)\n"
+        "except Exception:\n"
+        "    pass\n"
+    )
+
+
+def _pkg_probe_code(names: list[str]) -> str:
+    """Ask the kernel which distributions it can actually see, and at what version.
+
+    Deliberately asked of the KERNEL rather than of pip: pip reporting success
+    proves a download, not that the package became importable where the code
+    runs. importlib.metadata also avoids guessing import names from
+    distribution names ('beautifulsoup4' imports as 'bs4').
+    """
+    return (
+        "try:\n"
+        "    import json as _sb_json\n"
+        "    from importlib.metadata import version as _sb_ver\n"
+        "    _sb_out = {}\n"
+        f"    for _sb_n in {list(names)!r}:\n"
+        "        try:\n"
+        "            _sb_out[_sb_n] = _sb_ver(_sb_n)\n"
+        "        except Exception:\n"
+        "            _sb_out[_sb_n] = None\n"
+        f"    print({_PKG_SENTINEL!r} + _sb_json.dumps(_sb_out))\n"
+        "    for _sb_k in ('_sb_json', '_sb_ver', '_sb_out', '_sb_n'):\n"
+        "        globals().pop(_sb_k, None)\n"
+        "    globals().pop('_sb_k', None)\n"
+        "except Exception:\n"
+        "    pass\n"
+    )
+
+
 # Evidence that a cell which never raised still went wrong.
 _TRACEBACK_RE = re.compile(r"^Traceback \(most recent call last\):", re.M)
 _LOG_ERROR_RE = re.compile(r"^(?:ERROR|CRITICAL)[: ]", re.M)
@@ -279,7 +331,14 @@ class StatefulKernel:
 
     def _run_startup_locked(self) -> None:
         """Send startup init and drain to idle. Assumes lock held."""
-        self._run_silent_locked(_STARTUP_CODE, timeout=config.STARTUP_TIMEOUT)
+        code = _STARTUP_CODE
+        site_dir = pip_installer.site_packages_dir()
+        if site_dir is not None:
+            # Packages installed by install_python_packages live outside this
+            # interpreter's own site-packages; make them importable from the
+            # first cell, not only after an install in this session.
+            code += "\n" + _site_dir_code(str(site_dir))
+        self._run_silent_locked(code, timeout=config.STARTUP_TIMEOUT)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -539,6 +598,29 @@ class StatefulKernel:
             return head + f"\n[sandbox] ...output truncated at {cap} characters."
         return text
 
+    def add_site_dir(self, site_dir: str) -> None:
+        """Make ``site_dir`` importable in this live kernel."""
+        with self._lock:
+            if self._km is None or not self._km.is_alive():
+                return  # a kernel started later picks it up from _STARTUP_CODE
+            self._run_silent_locked(_site_dir_code(site_dir), timeout=30)
+
+    def package_versions(self, names: list[str]) -> dict[str, str | None]:
+        """Version of each distribution as THIS kernel sees it, None if absent."""
+        if not names:
+            return {}
+        with self._lock:
+            if self._km is None or not self._km.is_alive():
+                return {n: None for n in names}
+            out = self._run_silent_locked(_pkg_probe_code(names), timeout=60)
+        for line in out.splitlines():
+            if line.startswith(_PKG_SENTINEL):
+                try:
+                    return json.loads(line[len(_PKG_SENTINEL):])
+                except ValueError:
+                    break
+        return {n: None for n in names}
+
     def is_alive(self) -> bool:
         return self._km is not None and self._km.is_alive()
 
@@ -632,6 +714,23 @@ class KernelPool:
             kernel.restart()
             self._last_used[ns] = time.monotonic()
             return True
+
+    def add_site_dir_everywhere(self, site_dir: str) -> None:
+        """Make a just-installed package importable in every live kernel.
+
+        Otherwise only the namespace that ran the install would see it until its
+        kernel restarted -- and restarting is exactly what the other
+        conversations cannot afford, since it drops their loaded data.
+        """
+        with self._lock:
+            kernels = list(self._kernels.values())
+            if self._reserve is not None:
+                kernels.append(self._reserve)
+        for kernel in kernels:
+            try:
+                kernel.add_site_dir(site_dir)
+            except Exception:  # noqa: BLE001 - one bad kernel must not block the rest
+                pass
 
     def active_namespaces(self) -> list[str]:
         with self._lock:

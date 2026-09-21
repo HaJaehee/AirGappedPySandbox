@@ -50,6 +50,13 @@ wiki/                                                     ← this handoff (EN)
 `SANDBOX_KERNEL_PYTHON`, `SANDBOX_WORKSPACE`, `SANDBOX_EXEC_TIMEOUT`,
 `SANDBOX_STARTUP_TIMEOUT`, `SANDBOX_MAX_STREAM_CHARS`, `SANDBOX_LAZY_START`.
 
+Package installs (v0.6.0): `SANDBOX_PIP_INDEX_URL`, `SANDBOX_PIP_TRUSTED_HOST`,
+`SANDBOX_VENV`, `SANDBOX_PIP_TIMEOUT`, `SANDBOX_PIP_NETWORK_TIMEOUT`,
+`SANDBOX_PIP_RETRIES`, `SANDBOX_VENV_CREATE_TIMEOUT`,
+`SANDBOX_MAX_PACKAGES_PER_CALL`. **`SANDBOX_PIP_INDEX_URL` is the one that gets
+forgotten**, and forgetting it is why `install_python_packages` fails on a fresh
+host; `python check_environment.py` reports it.
+
 ## Platform facts
 
 - OS: Windows 11 Pro. Shells: PowerShell (primary) + Bash (Git Bash / POSIX).

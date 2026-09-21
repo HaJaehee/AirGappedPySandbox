@@ -24,6 +24,7 @@ from pathlib import Path
 from mcp.server.fastmcp import Context, FastMCP
 
 import config
+import pip_installer
 from artifacts import chat_link_path, diff, snapshot
 from kernel_manager import POOL
 
@@ -42,8 +43,10 @@ IMPORTANT RULES for this sandbox:
    `active_namespace: ns-XXXX`. On EVERY following call pass that EXACT value.
    If you change or drop it, your loaded data (dataframes, parsed files) will no
    longer be visible.
-1. AIR-GAP: Do NOT run pip/apt/conda or any install command, and do NOT make
-   network calls. Pre-installed libraries include: pandas, numpy, scipy, sympy,
+1. NO INSTALLS FROM YOUR CODE: Do NOT run pip/apt/conda inside the code you
+   execute, and do NOT make network calls. If you need a library that is not
+   listed below, call the install_python_packages tool -- that is the only
+   supported way to add one. Pre-installed libraries include: pandas, numpy, scipy, sympy,
    matplotlib, seaborn, pdfplumber, pypdf, PyMuPDF (fitz), openpyxl, xlsxwriter,
    xlrd, lxml, xmltodict, python-docx, markdown, beautifulsoup4, python-pptx (pptx),
    reportlab, jinja2, plotly, duckdb, polars, pyarrow, Pillow (PIL), rapidfuzz.
@@ -609,6 +612,154 @@ def list_workspace_files() -> str:
             human = f"{size} B"
         lines.append(f"- ./workspace/{rel}  [{ext}, {human}]")
     return "\n".join(lines)
+
+
+def _install_block(ns: str, source: str, status: str, headline: str,
+                   body: list[str], next_action: str) -> str:
+    """Same shape as an execution response: verdict first, instruction last."""
+    lines = [f"install_status: {status}", headline, "", _banner(ns, source)]
+    lines.extend(body)
+    lines.append("\n" + _reminder(ns))
+    lines.append(f"next_action: {next_action}")
+    return "\n".join(lines)
+
+
+@mcp.tool(
+    description=(
+        "Install Python packages from the company's internal PyPI mirror into "
+        "this sandbox, so you can import them in later execute_python_code "
+        "calls. Use it when an import fails because a library is missing.\n\n"
+        "packages : distribution names separated by spaces or commas, e.g. "
+        "\"polars\" or \"polars, rapidfuzz>=3.0\". Names ONLY (a version "
+        "specifier is allowed) -- URLs, file paths, editable installs and pip "
+        "flags are refused, and you cannot choose the index.\n"
+        "namespace: your conversation's namespace id, exactly as for "
+        "execute_python_code.\n\n"
+        "The distribution name is often NOT the import name: install "
+        "\"beautifulsoup4\" to import bs4, \"python-docx\" to import docx, "
+        "\"Pillow\" to import PIL.\n\n"
+        "Packages go into a separate virtual environment, never into the "
+        "bundled Python, and become importable in every live namespace "
+        "immediately -- no kernel restart, so your loaded data survives.\n\n"
+        "The reply starts with `install_status: INSTALLED` or "
+        "`install_status: FAILED`. INSTALLED means the kernel itself confirmed "
+        "the package and reports its version, not merely that pip exited 0. "
+        "FAILED explains what went wrong; the usual cause is that this machine "
+        "was never pointed at the mirror, which is for the USER to fix -- "
+        "report it instead of retrying."
+    )
+)
+def install_python_packages(packages: str, namespace: str,
+                            ctx: Context | None = None) -> str:
+    """Install ``packages`` into the sandbox venv and verify them in the kernel.
+
+    Args:
+        packages: Distribution names separated by spaces or commas, each
+              optionally carrying a version specifier ("polars>=1.0").
+        namespace: Your conversation's namespace id (see execute_python_code).
+    """
+    ns, source = _resolve_namespace(namespace, ctx)
+    specs, rejected = pip_installer.parse_requests(packages)
+
+    if rejected:
+        return _install_block(
+            ns, source, "FAILED",
+            "Refused before pip ran: " + ", ".join(rejected),
+            ["\n--- why ---",
+             "Pass distribution names only, optionally with a version "
+             "specifier -- \"polars\" or \"polars>=1.0\". URLs, file paths, "
+             "editable installs and pip flags are not accepted: the index and "
+             "every other pip option are fixed by the server."],
+            "Call this tool again with plain package names only.")
+
+    if not specs:
+        return _install_block(
+            ns, source, "FAILED", "No package was named.", [],
+            'Call this tool again with, for example, packages="polars".')
+
+    if len(specs) > config.MAX_PACKAGES_PER_CALL:
+        return _install_block(
+            ns, source, "FAILED",
+            f"{len(specs)} packages requested; the limit is "
+            f"{config.MAX_PACKAGES_PER_CALL} per call.",
+            [], "Ask for the ones you actually need, in smaller batches.")
+
+    names = [pip_installer.dist_name(spec) for spec in specs]
+    kernel = POOL.get(ns)
+    before = kernel.package_versions(names)
+
+    # Nothing to do: every requested name is already importable and none of them
+    # pinned a version. Saves a pointless round trip to the mirror when a model
+    # reflexively "installs" pandas.
+    if all(spec == pip_installer.dist_name(spec) for spec in specs) and \
+            all(before.get(name) for name in names):
+        return _install_block(
+            ns, source, "INSTALLED",
+            f"{len(names)} package(s) were already importable; pip was not run.",
+            ["\n--- packages ---"]
+            + [f"{name} {before[name]}  (already available)" for name in names],
+            "Import them in your next execute_python_code call, with the same "
+            "namespace.")
+
+    report = pip_installer.install(specs)
+
+    pip_lines = [
+        "\n--- pip ---",
+        f"index: {report.index_label}",
+        f"venv:  {config.VENV_DIR}" + (" (created now)" if report.venv_created else ""),
+    ]
+    if report.seconds:
+        exit_note = "" if report.returncode is None else f", exit {report.returncode}"
+        pip_lines.append(f"took:  {report.seconds:.1f}s{exit_note}")
+
+    if not report.ok:
+        body = ["\n--- why it failed ---", pip_installer.diagnose(report)]
+        if report.output:
+            body += ["\n--- pip output ---", report.output]
+        return _install_block(
+            ns, source, "FAILED",
+            "pip could not install: " + ", ".join(specs),
+            body + pip_lines,
+            "Do NOT repeat the same install. Tell the user in one sentence what "
+            "has to be fixed on their machine, and carry on without the package "
+            "if the task allows it.")
+
+    site_dir = pip_installer.site_packages_dir()
+    if site_dir is not None:
+        POOL.add_site_dir_everywhere(str(site_dir))
+    after = kernel.package_versions(names)
+    missing = [name for name in names if not after.get(name)]
+
+    if missing:
+        # pip exiting 0 proves a download, not an import. Saying INSTALLED here
+        # would be the same lie the execution verdicts exist to prevent.
+        body = [
+            "\n--- why it failed ---",
+            "pip exited 0, but " + ", ".join(missing) + " is still not visible "
+            "to the kernel. The download worked and the import path did not: "
+            "usually the distribution name is an alias for a differently-named "
+            f"package, or the files landed outside {site_dir}.",
+        ]
+        if report.output:
+            body += ["\n--- pip output ---", report.output]
+        return _install_block(
+            ns, source, "FAILED",
+            "Downloaded by pip, but not importable: " + ", ".join(missing),
+            body + pip_lines,
+            "Confirm the exact distribution name with the user before retrying.")
+
+    packages_block = ["\n--- packages ---"]
+    for name in names:
+        unchanged = before.get(name) and before.get(name) == after.get(name)
+        packages_block.append(
+            f"{name} {after[name]}" + ("  (already available)" if unchanged else ""))
+
+    return _install_block(
+        ns, source, "INSTALLED",
+        f"{len(names)} package(s) are importable in your namespace now.",
+        packages_block + pip_lines,
+        "Import them in your next execute_python_code call, with the same "
+        "namespace.")
 
 
 @mcp.tool(

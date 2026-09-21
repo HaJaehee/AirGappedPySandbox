@@ -108,10 +108,33 @@ def main() -> int:
     if not ipyk:
         missing_required.append("ipykernel")
 
+    # Package mirror. A warning, not a failure: the sandbox works without it,
+    # but finding out mid-conversation that installs were never going to work
+    # is exactly what this pre-flight exists to prevent.
+    print("\nPackage mirror (used by install_python_packages):")
+    try:
+        import pip_installer
+
+        url, origin = pip_installer.effective_index()
+        print(f"  index: {url}")
+        print(f"         from {origin}")
+        reachable, detail = pip_installer.probe_index(url, 10)
+        if reachable:
+            print(f"  [OK ] reachable -- {detail}")
+        else:
+            print(f"  [WARN] NOT reachable -- {detail}")
+            print("         install_python_packages will fail until this is fixed.")
+            print("         Set SANDBOX_PIP_INDEX_URL to the intranet mirror")
+            print("         (and SANDBOX_PIP_TRUSTED_HOST if it is plain http).")
+    except Exception as exc:  # noqa: BLE001 - never fail the pre-flight on this
+        print(f"  [WARN] could not check the mirror: {exc}")
+
     print()
     if missing_required:
         print("RESULT: FAIL -- missing required packages: " + ", ".join(missing_required))
-        print("These must be pre-installed in the portable Python (no pip on the air-gapped host).")
+        print("These belong in the portable Python itself. install_python_packages")
+        print("can add packages from the mirror, but the base stack should not")
+        print("depend on it -- the mirror may be unreachable when it matters.")
         return 1
 
     # Final live check: actually boot a kernel and run one statement.

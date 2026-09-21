@@ -6,7 +6,7 @@ Verify on the **real WinPython** (`dist/AirGappedPySandbox/WPy64-313130/python/
 python.exe`), not only the dev venv. The dev venv proves logic; WinPython proves
 the actual shipped runtime.
 
-## 1. Core smoke tests — `test_core.py` (65 checks)
+## 1. Core smoke tests — `test_core.py` (78 checks)
 
 Kernel + artifact layer, no MCP needed.
 
@@ -74,6 +74,11 @@ This is the evidence that the package is genuinely usable offline.
   keep it separate from `test_core.py` so `test_core` stays MCP-free.
   (`run_python_file` and the execution verdicts ARE committed now: `test_core.py`
   calls `server.*` directly and skips those checks when the MCP SDK is absent.)
+- **No test installs a package for real.** `check_pip_installer()` covers
+  request parsing, the venv, and every failure path (it points pip at a
+  hostname RFC 2606 reserves to never resolve), but a genuine download from the
+  company mirror can only be verified on a host that has one. Do that once, by
+  hand, when deploying.
 - **Nothing tests a failure the sandbox cannot observe.** A model that wraps its
   own code in `try/except` and swallows the exception still gets
   `RAN_UNVERIFIED`; only the Phase 3 `expect` argument in
