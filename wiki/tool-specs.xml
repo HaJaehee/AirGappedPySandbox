@@ -8,12 +8,13 @@
 <mcpServer name="air-gapped-python-sandbox" transport="stdio" asOfCommit="229fb8a">
 
   <commonResponseFormat>
-    <banner name="active_namespace" desc="top line 'active_namespace: ns-XXXX' + note; a trailing '[reminder] your namespace ...' is appended too"/>
-    <field name="execution_status" values="SUCCESS|ERROR|TIMEOUT"/>
+    <field name="execution_status" values="RAN_UNVERIFIED|RAN_NO_OUTPUT|RAN_WITH_ERRORS|FAILED|TIMEOUT" desc="FIRST line, followed by a one-line explanation. A verdict, not a ran/did-not-run flag; there is deliberately no SUCCESS value (see 11-execution-verdict-plan.md)."/>
+    <banner name="active_namespace" desc="'active_namespace: ns-XXXX' + note, below the verdict; a '[reminder] your namespace ...' line is appended near the end too"/>
+    <section name="stderr" desc="cleaned traceback/warnings, ANSI stripped; placed ABOVE stdout because it carries the reason for the verdict"/>
     <section name="stdout" desc="everything print()ed"/>
     <section name="last expression" desc="repr of last expression; shown ONLY when stdout is empty"/>
-    <section name="stderr" desc="cleaned traceback/warnings, ANSI stripped"/>
     <section name="artifacts" desc="Markdown links to new/changed ./workspace files; images as ![](), else []()"/>
+    <field name="next_action" desc="LAST line: the single instruction the model is told to obey for this verdict"/>
   </commonResponseFormat>
 
   <namespaceParam desc="Mandatory on execution tools. Per-conversation isolation; see 09-namespace-routing.md.">
@@ -34,7 +35,7 @@
   </tool>
 
   <tool name="run_python_file" stateful="true" addedIn="229fb8a">
-    <description>Run an existing .py file from ./workspace as a script (runpy.run_path with run_name='__main__'); its __main__ block runs. The file's top-level names are merged into the kernel namespace afterwards.</description>
+    <description>Run an existing .py file from ./workspace as a script: its compiled source is exec'd in the kernel namespace with __file__ and sys.argv[0] set, so its __main__ block runs. Top-level names land in the kernel namespace as they are bound and survive sys.exit() or a crash. sys.exit(0) is a normal ending; a non-zero code is FAILED.</description>
     <input>
       <param name="file_path" type="string" required="true">Path to a .py file INSIDE ./workspace. Accepts bare name, ./workspace/ prefix, or absolute path within the workspace.</param>
       <param name="namespace" type="string" required="true">Conversation namespace; see namespaceParam.</param>
@@ -42,9 +43,9 @@
     <output type="text" format="commonResponseFormat"/>
     <isolation>
       <rule>Resolved via _resolve_workspace_file(); must land inside ./workspace.</rule>
-      <error condition="path outside workspace">execution_status: ERROR, message contains "outside the workspace"</error>
-      <error condition="file missing">execution_status: ERROR, message contains "not found"</error>
-      <error condition="suffix is not .py">execution_status: ERROR, message contains "is not a .py file"; checked before the kernel is touched</error>
+      <error condition="path outside workspace">execution_status: FAILED, message contains "outside the workspace"</error>
+      <error condition="file missing">execution_status: FAILED, message contains "not found"</error>
+      <error condition="suffix is not .py">execution_status: FAILED, message contains "is not a .py file"; checked before the kernel is touched</error>
     </isolation>
   </tool>
 

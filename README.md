@@ -1,6 +1,6 @@
 # 에어갭 Python 샌드박스 — MCP 서버
 
-**버전: v0.4.1** ([변경 이력](#버전-이력))
+**버전: v0.5.0** ([변경 이력](#버전-이력))
 
 MCP(Model Context Protocol)를 통해 LLM에 노출되는 **상태 유지형(stateful) 오프라인 Python 코드 인터프리터**입니다.
 사내/기업용 LLM(AnythingLLM 에이전트 경유)이 수학 계산, 데이터 분석, 차트 생성, 문서 파싱을 위해
@@ -58,12 +58,15 @@ IPython 커널  ← 4GB 포터블 Python으로 실행됨
 ## LLM에 노출되는 MCP 도구
 
 - **`execute_python_code(code: str, namespace: str)`** — 해당 네임스페이스의 영속 커널에서 Python을
-  실행합니다. `execution_status`(`SUCCESS` / `ERROR` / `TIMEOUT`), 캡처된 stdout, stderr(정리된 트레이스백
-  포함), 새로 생성된 workspace 파일 Markdown 링크를 반환합니다. 응답 맨 위에 `active_namespace: ns-XXXX`가
-  표시됩니다.
+  실행합니다. `execution_status`(`RAN_UNVERIFIED` / `RAN_NO_OUTPUT` / `RAN_WITH_ERRORS` / `FAILED` /
+  `TIMEOUT`), 캡처된 stdout, stderr(정리된 트레이스백 포함), 새로 생성된 workspace 파일 Markdown 링크를
+  반환합니다. 응답의 **첫 줄은 판정, 마지막 줄은 `next_action:` 지시**이고 그 사이에
+  `active_namespace: ns-XXXX`가 표시됩니다. `SUCCESS`라는 값은 존재하지 않습니다 — 샌드박스는 실패를
+  증명할 수는 있어도 성공을 증명할 수 없고, 약한 모델은 그 한 단어를 "과업 완료"로 읽기 때문입니다.
 - **`run_python_file(file_path: str, namespace: str)`** — `./workspace` 안의 `.py` 파일을 해당 네임스페이스
   커널에서 스크립트로 실행합니다(`if __name__ == '__main__'` 블록 실행). 반환 형식은 `execute_python_code`와
-  동일하며, 파일의 최상위 변수/함수는 실행 후에도 메모리에 남습니다. 경로는 반드시 `./workspace` 안이어야
+  동일하며, 파일의 최상위 변수/함수는 `sys.exit()`로 끝나거나 도중에 예외가 나도 메모리에 남습니다.
+  `sys.exit(0)`은 정상 종료로, 0이 아닌 종료 코드는 `FAILED`로 판정합니다. 경로는 반드시 `./workspace` 안이어야
   하며(격리), 바깥 경로는 거부됩니다.
 - **`write_workspace_file(filename: str, content: str, overwrite: bool = False)`** — 텍스트(소스 코드, 메모,
   CSV, Markdown, JSON 등)를 `./workspace` 안의 파일로 **그대로 저장**합니다. 코드를 실행하지 않으며
@@ -206,7 +209,8 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 
 | 버전 | 변경 내용 |
 |------|-----------|
-| **v0.4.1** | 워크스페이스 경로 처리 수정 — 커널의 작업 디렉터리를 `SANDBOX_WORKSPACE`(프로젝트 밖이어도) 안으로 이동해, 코드는 `./workspace/` 접두사 없이 단순 상대 경로를 사용합니다. 상대값 `SANDBOX_WORKSPACE`는 호스트 cwd가 아닌 프로젝트 루트 기준으로 해석. `run_python_file`의 `./workspace/x.py` 해석과 채팅 링크 경로가 프로젝트 외부 워크스페이스에서도 정상 동작. |
+| **v0.5.0** | 실행 판정 개편: 'SUCCESS' 제거, 예외 없이 실패하는 경우(스레드 크래시·subprocess 비정상 종료·삼켜진 트레이스백) 탐지, sys.exit(0) 오판 수정, run_python_file 상태 보존 |
+| v0.4.1 | 워크스페이스 경로 처리 수정 — 커널의 작업 디렉터리를 `SANDBOX_WORKSPACE`(프로젝트 밖이어도) 안으로 이동해, 코드는 `./workspace/` 접두사 없이 단순 상대 경로를 사용합니다. 상대값 `SANDBOX_WORKSPACE`는 호스트 cwd가 아닌 프로젝트 루트 기준으로 해석. `run_python_file`의 `./workspace/x.py` 해석과 채팅 링크 경로가 프로젝트 외부 워크스페이스에서도 정상 동작. |
 | v0.4.0 | `write_workspace_file` 도구 추가 — 텍스트/코드를 코드 실행 없이 `./workspace`에 그대로 저장(경로 격리·덮어쓰기 보호·크기 상한). 작은 모델이 실패하던 '자기 소스를 인용하는 파이썬 생성' 패턴 제거. `run_python_file`은 이제 `.py`가 아닌 파일을 커널에 넘기기 전에 거부. |
 | v0.3.0 | 대화별 **네임스페이스 라우팅**(필수 `namespace` 인자) 도입 — 한 서버 프로세스를 공유하는 여러 AnythingLLM 대화의 변수 충돌 방지. 네임스페이스별 커널 풀(웜 리저브·유휴 회수·LRU 상한), 응답 배너 되울림, 미래 `_meta` 대화 id 훅. |
 | v0.2.0 | `run_python_file` 도구 추가(워크스페이스 `.py` 파일을 스크립트로 실행). |

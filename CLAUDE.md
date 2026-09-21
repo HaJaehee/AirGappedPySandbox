@@ -71,7 +71,10 @@ Output Schema:
 stdout (string): Standard output produced by print() statements.
 stderr (string): Error tracebacks or warnings, if any.
 artifacts (array of strings): Markdown formatted paths/links to any newly generated files (e.g., ![Chart](./workspace/chart.png)).
-execution_status (string): "SUCCESS", "ERROR", or "TIMEOUT".
+execution_status (string): as-built (v0.5.0) this is a VERDICT, not a
+"did the interpreter run" flag: "RAN_UNVERIFIED", "RAN_NO_OUTPUT",
+"RAN_WITH_ERRORS", "FAILED" or "TIMEOUT". There is deliberately no "SUCCESS"
+value — see wiki/11-execution-verdict-plan.md for why.
 Tool 2: list_workspace_files (Helper Tool)
 Description: Lists all user-uploaded or generated files currently residing in the ./workspace directory (e.g., target PDFs, Excels, CSVs).
 Input Schema: None.

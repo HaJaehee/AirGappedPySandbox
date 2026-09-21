@@ -30,6 +30,30 @@
   `./workspace` would otherwise mean a different folder per host — and a
   different one than a sibling filesystem MCP server was given.
 
+### "It ran" is not "it worked" (v0.5.0)
+
+Until v0.4.1 `execution_status` was `SUCCESS` whenever the cell finished without
+an uncaught exception. That is a different claim from "the task succeeded", and
+a small model reads the word SUCCESS as the latter and stops checking. Measured
+examples that all reported SUCCESS: a swallowed traceback, `logging.error(...)`,
+a background thread crashing, a child process exiting 3, `print('FAIL: ...')`,
+and a cell that printed nothing at all. Meanwhile `sys.exit(0)` — a *normal*
+script ending — was reported as ERROR.
+
+So the vocabulary now grades the run instead of the interpreter, the word
+SUCCESS is gone, the verdict is the first line and a `next_action:` instruction
+is the last, and failures that never raise are collected two ways: a kernel-side
+incident ledger (`threading.excepthook`, `subprocess`, `os.system` hooks
+installed by `_STARTUP_CODE`, drained by `_PROBE_CODE` after every call) and
+pattern checks on stderr. **The sandbox can prove a failure; it cannot prove a
+success** — an exception the model catches itself stays invisible. The only
+optimistic verdict is therefore `RAN_UNVERIFIED`. Full rationale and the
+unbuilt Phase 3 (`expect`) in `11-execution-verdict-plan.md`.
+
+Cost: one extra kernel round-trip per execution, to drain the ledger. Risk to
+watch: over-alarming. `RAN_WITH_ERRORS` is worded as "check before reporting",
+not "failed", so a stray `logging.error` cannot push a model into a retry loop.
+
 ## Windows / offline gotchas
 
 - **Blocking `time.sleep` is NOT interruptible on Windows.** The interrupt event

@@ -170,6 +170,160 @@ def check_external_workspace():
         shutil.rmtree(external, ignore_errors=True)
 
 
+def check_execution_verdicts():
+    """"It ran" must not come back as "it worked".
+
+    Each case below used to report SUCCESS (or, for sys.exit(0), ERROR) no
+    matter what actually happened. Uses the live KERNEL, so call before it is
+    shut down.
+    """
+    try:
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] execution verdict checks (server import failed: {exc})")
+        return
+
+    cases = [
+        ("printed answer", "print('answer', 6 * 7)", "RAN_UNVERIFIED"),
+        ("silent cell", "_quiet = 1", "RAN_NO_OUTPUT"),
+        ("ERROR log record",
+         "import logging; logging.error('database unreachable')",
+         "RAN_WITH_ERRORS"),
+        ("swallowed traceback",
+         "import traceback\n"
+         "try:\n"
+         "    raise ValueError('boom')\n"
+         "except Exception:\n"
+         "    traceback.print_exc()\n"
+         "print('finished')\n",
+         "RAN_WITH_ERRORS"),
+        ("background thread crash",
+         "import threading\n"
+         "def _boom():\n"
+         "    raise RuntimeError('bg')\n"
+         "_t = threading.Thread(target=_boom)\n"
+         "_t.start(); _t.join()\n"
+         "print('finished')\n",
+         "RAN_WITH_ERRORS"),
+        ("subprocess exits non-zero",
+         "import subprocess, sys\n"
+         "subprocess.run([sys.executable, '-c', 'import sys; sys.exit(3)'])\n"
+         "print('return code ignored')\n",
+         "RAN_WITH_ERRORS"),
+        ("uncaught exception", "1 / 0", "FAILED"),
+        ("sys.exit(1)", "import sys; sys.exit(1)", "FAILED"),
+        ("sys.exit(0) is not a failure",
+         "print('all good')\nimport sys; sys.exit(0)", "RAN_UNVERIFIED"),
+    ]
+    for name, code, expected in cases:
+        r = KERNEL.execute(code, timeout=30)
+        got = server._verdict(r, [])[0]
+        check(f"verdict: {name} -> {expected}", got == expected,
+              f"got {got} (status={r.status}, signals={r.signals})")
+
+    # The SystemExit traceback used to be dumped on the model as an "error".
+    r = KERNEL.execute("import sys; sys.exit(0)")
+    check("sys.exit(0) leaves stderr clean", "SystemExit" not in r.stderr,
+          r.stderr[:160])
+
+    # A ledger entry must not leak into the next call as a phantom failure.
+    r = KERNEL.execute("print('clean run')")
+    check("incident ledger is drained between calls",
+          server._verdict(r, [])[0] == "RAN_UNVERIFIED", f"signals={r.signals}")
+
+
+def check_run_python_file():
+    """Script semantics: sys.exit(0) is a normal ending, and state survives it."""
+    try:
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] run_python_file checks (server import failed: {exc})")
+        return
+    from kernel_manager import POOL
+
+    ws = config.ensure_workspace()
+    good = ws / "_smoke_exit0.py"
+    good.write_text(
+        "def main():\n"
+        "    print('all good')\n"
+        "    return 0\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    import sys\n"
+        "    sys.exit(main())\n",
+        encoding="utf-8")
+    bad = ws / "_smoke_exit2.py"
+    bad.write_text(
+        "def main():\n"
+        "    return 2\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    import sys\n"
+        "    sys.exit(main())\n",
+        encoding="utf-8")
+    try:
+        out = server.run_python_file("_smoke_exit0.py", namespace="_smoke_run")
+        check("run_python_file: sys.exit(0) is not a failure",
+              out.startswith("execution_status: RAN_UNVERIFIED"), out[:160])
+        check("run_python_file: __main__ block ran", "all good" in out)
+        probe = server.execute_python_code("print('main' in dir())",
+                                           namespace="_smoke_run")
+        check("run_python_file: state survives sys.exit()", "True" in probe,
+              probe[:200])
+
+        out = server.run_python_file("_smoke_exit2.py", namespace="_smoke_run")
+        check("run_python_file: non-zero exit is FAILED",
+              out.startswith("execution_status: FAILED"), out[:160])
+
+        out = server.run_python_file("_nope_missing.py", namespace="_smoke_run")
+        check("run_python_file: missing file is FAILED",
+              out.startswith("execution_status: FAILED"), out[:160])
+    finally:
+        good.unlink(missing_ok=True)
+        bad.unlink(missing_ok=True)
+        POOL.shutdown_all()
+
+
+def check_response_shape():
+    """A weak model reads the first and the last line. Both must carry weight."""
+    try:
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] response shape checks (server import failed: {exc})")
+        return
+
+    class _Fake:
+        stdout = "42\n"
+        stderr = ""
+        status = "OK"
+        result_repr = ""
+        error_name = ""
+        state_reset = False
+        exit_code = None
+        signals: list = []
+
+    out = server._render("ns-test", "provided", _Fake(), [])
+    lines = out.splitlines()
+    check("render: verdict is the first line",
+          lines[0] == "execution_status: RAN_UNVERIFIED", lines[0])
+    check("render: next_action is the last line",
+          lines[-1].startswith("next_action:"), lines[-1])
+    check("render: the word SUCCESS never appears", "SUCCESS" not in out)
+    check("render: namespace still advertised", "active_namespace: ns-test" in out)
+
+    class _Failed(_Fake):
+        status = "FAILED"
+        stderr = "Traceback (most recent call last): ..."
+        stdout = ""
+
+    out = server._render("ns-test", "provided", _Failed(), [])
+    check("render: failure verdict leads", out.startswith("execution_status: FAILED"))
+    check("render: stderr precedes stdout",
+          out.index("--- stderr ---") < out.index("--- stdout ---"))
+    check("render: failure closes with an instruction",
+          out.splitlines()[-1].startswith("next_action:"))
+
+
 def main():
     config.ensure_workspace()
     print(f"Kernel python: {config.KERNEL_PYTHON}")
@@ -178,7 +332,7 @@ def main():
     # 1. basic stdout
     r = KERNEL.execute("print('hello air-gap')")
     check("stdout captured", "hello air-gap" in r.stdout)
-    check("status SUCCESS", r.status == "SUCCESS")
+    check("status OK", r.status == "OK")
 
     # 2. statefulness across calls
     KERNEL.execute("_persist = 21 * 2")
@@ -187,13 +341,13 @@ def main():
 
     # 3. error handling
     r = KERNEL.execute("1/0")
-    check("error status", r.status == "ERROR")
+    check("error status", r.status == "FAILED")
     check("error name captured", r.error_name == "ZeroDivisionError")
     check("traceback in stderr", "ZeroDivisionError" in r.stderr)
 
     # 4. libraries present in the kernel interpreter
     r = KERNEL.execute("import numpy, pandas; print(pandas.__version__)")
-    check("pandas importable in kernel", r.status == "SUCCESS" and r.stdout.strip())
+    check("pandas importable in kernel", r.status == "OK" and r.stdout.strip())
 
     # 5. artifact interception: create a file, ensure diff finds it
     before = snapshot()
@@ -219,7 +373,7 @@ def main():
     after = snapshot()
     arts = diff(before, after, config.PROJECT_ROOT)
     png = [a for a in arts if a.path.name == "_smoke_chart.png"]
-    check("png chart created", bool(png) and r.status == "SUCCESS")
+    check("png chart created", bool(png) and r.status == "OK")
     if png:
         check("image markdown uses ![]", png[0].to_markdown().startswith("!["))
 
@@ -246,13 +400,20 @@ def main():
           Path(r.stdout.strip()).resolve() == config.WORKSPACE_DIR.resolve(),
           )
 
+    # 10. execution verdicts: failures that never raise must not read as success.
+    check_execution_verdicts()
+
     KERNEL.shutdown()
 
-    # 10. write_workspace_file: pure-function checks, no kernel needed.
+    # 11. write_workspace_file: pure-function checks, no kernel needed.
     check_write_workspace_file()
 
-    # 11. path handling when the workspace lives outside the project.
+    # 12. path handling when the workspace lives outside the project.
     check_external_workspace()
+
+    # 13. response shape (pure) and script semantics (boots a pooled kernel).
+    check_response_shape()
+    check_run_python_file()
     print()
     if check.failed:
         print(f"{check.failed} check(s) FAILED")

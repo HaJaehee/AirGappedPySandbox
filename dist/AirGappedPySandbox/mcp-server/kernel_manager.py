@@ -6,6 +6,16 @@ variables, imported modules and parsed dataframes persist across separate
 interpreter (``config.KERNEL_PYTHON``) so the heavy data-science libraries can
 live in the 4 GB portable Python while the MCP server runs anywhere.
 
+Verdict policy: this layer reports only what it can observe -- ``OK`` (the cell
+finished without an uncaught exception), ``FAILED`` (it raised, or exited with a
+non-zero code) or ``TIMEOUT``. "It ran" is deliberately NOT called "SUCCESS":
+whether the code did what the model intended is something this layer cannot
+know, and calling it SUCCESS is what led weak models to report failures as done.
+Failures that leave the cell's own control flow intact -- a crashed background
+thread, a child process exiting non-zero, a traceback caught and printed -- never
+arrive as an ``error`` message, so they are collected separately into
+``ExecResult.signals`` (see ``_STARTUP_CODE`` and ``_PROBE_CODE``).
+
 Timeout policy: an over-running cell is interrupted. If the kernel returns to
 idle it is reused (state preserved). If it stays wedged past a grace period --
 which happens on Windows for blocking C calls such as ``time.sleep`` that the
@@ -16,6 +26,7 @@ reported to the caller.
 
 from __future__ import annotations
 
+import json
 import queue
 import random
 import re
@@ -44,16 +55,29 @@ def _strip_ansi(text: str) -> str:
 class ExecResult:
     stdout: str = ""
     stderr: str = ""
-    status: str = "SUCCESS"  # SUCCESS | ERROR | TIMEOUT
+    # OK = the cell finished without an uncaught exception. Deliberately not
+    # called SUCCESS -- see the verdict policy in this module's docstring.
+    status: str = "OK"  # OK | FAILED | TIMEOUT
     result_repr: str = ""    # text/plain of the last expression, if any
     error_name: str = ""
     state_reset: bool = False  # True if the kernel was restarted this call
+    exit_code: int | str | None = None  # sys.exit() code, when the code called it
+    signals: list[str] = field(default_factory=list)  # non-raising failure evidence
     fields: dict = field(default_factory=dict)
 
 
 # Code run once, silently, right after the kernel boots (and after any restart).
-# Forces a headless matplotlib backend and guarantees the workspace directory
-# exists so the LLM's "./workspace/..." paths always resolve.
+# Forces a headless matplotlib backend, guarantees the workspace directory
+# exists so the LLM's "./workspace/..." paths always resolve, and installs the
+# incident ledger.
+#
+# The ledger exists because the loudest failures are invisible to the kernel
+# protocol: a background thread that raises, or a child process that exits
+# non-zero, leaves the cell itself finishing normally, so no `error` message is
+# ever sent and the old status logic called it SUCCESS. Each hook chains to the
+# original, so nothing the model would otherwise see is suppressed.
+#
+# This runs only on a fresh or restarted kernel, so the hooks cannot stack.
 _STARTUP_CODE = """
 import os as _os
 _os.makedirs('workspace', exist_ok=True)
@@ -62,7 +86,138 @@ try:
     _mpl.use('Agg')
 except Exception:
     pass
+
+_sandbox_incidents = []
+_sandbox_exit_code = None
+
+
+def _sandbox_record(text):
+    if len(_sandbox_incidents) < 20:
+        _sandbox_incidents.append(str(text)[:2000])
+
+
+try:
+    import threading as _threading, traceback as _traceback
+    _sandbox_prev_threadhook = _threading.excepthook
+
+    def _sandbox_threadhook(args):
+        try:
+            _sandbox_record("background thread %r raised:\\n%s" % (
+                getattr(args.thread, 'name', '?'),
+                "".join(_traceback.format_exception(
+                    args.exc_type, args.exc_value, args.exc_traceback))[-1200:]))
+        finally:
+            _sandbox_prev_threadhook(args)
+
+    _threading.excepthook = _sandbox_threadhook
+except Exception:
+    pass
+
+try:
+    import subprocess as _subprocess
+
+    def _sandbox_cmd(args):
+        try:
+            return (args if isinstance(args, str)
+                    else " ".join(str(a) for a in args))[:300]
+        except Exception:
+            return "<command>"
+
+    _sandbox_prev_run = _subprocess.run
+
+    def _sandbox_run(*a, **kw):
+        cp = _sandbox_prev_run(*a, **kw)
+        if getattr(cp, 'returncode', 0):
+            _sandbox_record("subprocess exited with code %s: %s"
+                            % (cp.returncode, _sandbox_cmd(cp.args)))
+        return cp
+
+    _subprocess.run = _sandbox_run
+    _sandbox_prev_call = _subprocess.call
+
+    def _sandbox_call(*a, **kw):
+        rc = _sandbox_prev_call(*a, **kw)
+        if rc:
+            _sandbox_record("subprocess exited with code %s" % rc)
+        return rc
+
+    _subprocess.call = _sandbox_call
+    _sandbox_prev_wait = _subprocess.Popen.wait
+
+    def _sandbox_wait(self, *a, **kw):
+        rc = _sandbox_prev_wait(self, *a, **kw)
+        if rc:
+            _sandbox_record("subprocess exited with code %s: %s"
+                            % (rc, _sandbox_cmd(self.args)))
+        return rc
+
+    _subprocess.Popen.wait = _sandbox_wait
+except Exception:
+    pass
+
+try:
+    _sandbox_prev_system = _os.system
+
+    def _sandbox_system(cmd):
+        rc = _sandbox_prev_system(cmd)
+        if rc:
+            _sandbox_record("os.system exited with code %s: %s" % (rc, str(cmd)[:300]))
+        return rc
+
+    _os.system = _sandbox_system
+except Exception:
+    pass
 """
+
+# Drains the ledger after every execution. Answers on stdout as one sentinel
+# line of JSON so a stray print() in the user's code cannot be mistaken for it.
+_PROBE_SENTINEL = "@@SANDBOX_PROBE@@"
+_PROBE_CODE = """
+try:
+    import json as _sb_json
+    try:
+        _sb_inc = list(_sandbox_incidents)
+        _sandbox_incidents.clear()
+    except NameError:
+        _sb_inc = []
+    try:
+        _sb_exit = _sandbox_exit_code
+    except NameError:
+        _sb_exit = None
+    _sandbox_exit_code = None
+    if not isinstance(_sb_exit, int) and _sb_exit is not None:
+        _sb_exit = str(_sb_exit)
+    print('%s' + _sb_json.dumps({'exit': _sb_exit, 'incidents': _sb_inc}))
+    del _sb_json, _sb_inc, _sb_exit
+except Exception:
+    pass
+""" % _PROBE_SENTINEL
+
+# Evidence that a cell which never raised still went wrong.
+_TRACEBACK_RE = re.compile(r"^Traceback \(most recent call last\):", re.M)
+_LOG_ERROR_RE = re.compile(r"^(?:ERROR|CRITICAL)[: ]", re.M)
+
+
+def _parse_exit_code(evalue: str) -> int | str | None:
+    """Exit code out of IPython's SystemExit evalue ('', '0', '2', 'message')."""
+    text = _strip_ansi((evalue or "").strip())
+    if not text or text == "None":
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
+def _stderr_signals(stderr: str) -> list[str]:
+    """Failure evidence visible only in the text a non-raising cell wrote."""
+    found: list[str] = []
+    if _TRACEBACK_RE.search(stderr):
+        found.append("a traceback was printed to stderr (an exception was caught, "
+                     "not fixed)")
+    if _LOG_ERROR_RE.search(stderr):
+        found.append("ERROR/CRITICAL log records were emitted")
+    return found
 
 
 class StatefulKernel:
@@ -223,16 +378,52 @@ class StatefulKernel:
                 if "text/plain" in data:
                     result.result_repr = data["text/plain"]
             elif mtype == "error":
-                result.status = "ERROR"
-                result.error_name = content.get("ename", "")
-                tb = "\n".join(content.get("traceback", []))
-                stderr_parts.append(_strip_ansi(tb))
+                ename = content.get("ename", "")
+                if ename == "SystemExit":
+                    # A script ending in sys.exit(0) has finished NORMALLY, but
+                    # IPython reports every SystemExit as an error -- which made
+                    # working scripts come back as ERROR, with a "use %tb"
+                    # traceback the model then tried to "fix". Judge by the code
+                    # instead, and drop that traceback either way.
+                    code = _parse_exit_code(content.get("evalue", ""))
+                    result.exit_code = 0 if code is None else code
+                    if code:
+                        result.status = "FAILED"
+                        result.error_name = "SystemExit"
+                        stderr_parts.append(
+                            f"\n[sandbox] The code called sys.exit({code!r})."
+                        )
+                else:
+                    result.status = "FAILED"
+                    result.error_name = ename
+                    tb = "\n".join(content.get("traceback", []))
+                    stderr_parts.append(_strip_ansi(tb))
             elif mtype == "status" and content.get("execution_state") == "idle":
                 self._read_shell_reply(kc, msg_id, timeout=5)
                 break
 
-        result.stdout = self._cap(_strip_ansi("".join(stdout_parts)))
-        result.stderr = self._cap(_strip_ansi("".join(stderr_parts)))
+        stdout = _strip_ansi("".join(stdout_parts))
+        stderr = _strip_ansi("".join(stderr_parts))
+
+        # Drain the in-kernel ledger, and pick up a sys.exit() code that the
+        # run_python_file wrapper caught before IPython could see it. Skipped
+        # after a restart: that wiped the ledger along with everything else.
+        if not result.state_reset:
+            exit_code, incidents = self._collect_probe_locked()
+            if exit_code is not None and result.exit_code is None:
+                result.exit_code = exit_code
+                if exit_code:
+                    result.status = "FAILED"
+                    stderr += f"\n[sandbox] The script exited with code {exit_code!r}."
+            result.signals.extend(incidents)
+
+        if result.status == "OK":
+            # Only for a cell that never raised: when it did, the traceback in
+            # stderr IS the failure being reported, not a second signal.
+            result.signals.extend(_stderr_signals(stderr))
+
+        result.stdout = self._cap(stdout)
+        result.stderr = self._cap(stderr)
         return result
 
     # -- helpers -----------------------------------------------------------
@@ -268,11 +459,37 @@ class StatefulKernel:
         self._restart_locked()
         return False
 
-    def _run_silent_locked(self, code: str, timeout: int) -> None:
-        """Execute code and drain to idle, discarding output. Lock held."""
+    def _collect_probe_locked(self) -> tuple[int | str | None, list[str]]:
+        """Read and clear the kernel-side incident ledger. Lock held.
+
+        Costs one extra kernel round-trip per execution. Draining it on every
+        call -- even when the result is already a failure -- is what stops a
+        late incident from surfacing against somebody else's next call.
+        """
+        try:
+            out = self._run_silent_locked(_PROBE_CODE, timeout=10)
+        except Exception:
+            return None, []
+        for line in out.splitlines():
+            if not line.startswith(_PROBE_SENTINEL):
+                continue
+            try:
+                data = json.loads(line[len(_PROBE_SENTINEL):])
+            except ValueError:
+                return None, []
+            return data.get("exit"), [str(x) for x in (data.get("incidents") or [])]
+        return None, []
+
+    def _run_silent_locked(self, code: str, timeout: int) -> str:
+        """Execute code, drain to idle and return its stdout. Lock held.
+
+        ``store_history=False`` keeps these hidden cells out of IPython's
+        In/Out history, so they never shift the ``_`` the model may rely on.
+        """
         kc = self._kc
         self._drain_iopub(kc)
         msg_id = kc.execute(code, allow_stdin=False, store_history=False)
+        parts: list[str] = []
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -280,14 +497,18 @@ class StatefulKernel:
             except queue.Empty:
                 continue
             except Exception:
-                return
-            if (
+                break
+            if msg.get("parent_header", {}).get("msg_id") != msg_id:
+                continue
+            if msg["msg_type"] == "stream" and msg["content"].get("name") == "stdout":
+                parts.append(msg["content"]["text"])
+            elif (
                 msg["msg_type"] == "status"
                 and msg["content"].get("execution_state") == "idle"
-                and msg.get("parent_header", {}).get("msg_id") == msg_id
             ):
                 self._read_shell_reply(kc, msg_id, timeout=2)
-                return
+                break
+        return "".join(parts)
 
     def _drain_iopub(self, kc) -> None:
         while True:

@@ -61,6 +61,11 @@ IMPORTANT RULES for this sandbox:
    so use distinctive output filenames.
 5. SELF-CORRECT: If stderr shows an error, read the traceback, fix the code and
    call execute_python_code again (with the same namespace).
+6. "IT RAN" IS NOT "IT WORKED": execution_status reports only what this sandbox
+   can observe. RAN_UNVERIFIED means the interpreter finished without raising --
+   nothing more. Never tell the user a task succeeded on that basis; compare the
+   printed output against what was actually asked first. Every response ends
+   with a `next_action:` line: do what it says.
 Variables/imports/dataframes PERSIST between calls WITHIN your namespace.
 """.strip()
 
@@ -142,28 +147,89 @@ def _banner(ns: str, source: str) -> str:
     return f"active_namespace: {ns}\n{note}"
 
 
-def _wrap(ns: str, source: str, body: str) -> str:
-    """Prepend the namespace banner and append a trailing reminder."""
-    footer = f'\n\n[reminder] your namespace = "{ns}" -- pass it as `namespace` on your next call.'
-    return f"{_banner(ns, source)}\n\n{body}{footer}"
+def _reminder(ns: str) -> str:
+    return f'[reminder] your namespace = "{ns}" -- pass it as `namespace` on your next call.'
 
 
-def _format_response(code_result, artifacts) -> str:
-    """Render the execution result as a single text block for the LLM."""
-    lines: list[str] = [f"execution_status: {code_result.status}"]
+def _verdict(code_result, artifacts) -> tuple[str, str, str]:
+    """Grade one execution: (status, what it means, what to do next).
 
-    stdout = code_result.stdout.rstrip("\n")
-    lines.append("\n--- stdout ---")
-    lines.append(stdout if stdout else "(no printed output -- remember to print() your results)")
+    The sandbox can prove a failure; it can almost never prove a success. So
+    the only optimistic verdict it hands out is RAN_UNVERIFIED, and the word
+    SUCCESS never appears -- a weak model reads it as "the task is done" and
+    stops looking, which is exactly the bug this grading exists to prevent.
+    """
+    if code_result.status == "TIMEOUT":
+        lost = " The kernel had to be restarted, so variables are gone." if \
+            code_result.state_reset else ""
+        return (
+            "TIMEOUT",
+            "The code was interrupted at the time limit and did NOT finish." + lost,
+            "Do not report a result. Cut the work down (smaller input, fewer "
+            "rows, a narrower loop), add progress print()s, and run again.",
+        )
 
-    if code_result.result_repr and not stdout:
-        lines.append("\n--- last expression ---")
-        lines.append(code_result.result_repr)
+    if code_result.status == "FAILED":
+        return (
+            "FAILED",
+            "The code raised an exception or exited with a non-zero code. "
+            "Nothing it was asked to do can be assumed done.",
+            "Do NOT tell the user this worked. Read the stderr block, fix the "
+            "code, and call this tool again with the same namespace.",
+        )
+
+    if code_result.signals:
+        return (
+            "RAN_WITH_ERRORS",
+            "The code finished, but errors were reported while it ran: "
+            + "; ".join(code_result.signals),
+            "Treat this as unfinished until you have checked those errors. If "
+            "they are real, fix the code and run once more; if they are "
+            "genuinely harmless, say so explicitly instead of ignoring them.",
+        )
+
+    has_output = bool(code_result.stdout.strip() or code_result.result_repr.strip())
+    if not has_output and not artifacts:
+        return (
+            "RAN_NO_OUTPUT",
+            "The code finished without printing anything and without changing "
+            "any file, so there is NO evidence of what it did.",
+            "Do not report a result you cannot see. Wrap the values that answer "
+            "the user's question in print() and run again with the same namespace.",
+        )
+
+    exited_clean = " (the script exited with code 0)" if code_result.exit_code == 0 else ""
+    return (
+        "RAN_UNVERIFIED",
+        "The interpreter finished without raising" + exited_clean + ". That is "
+        "NOT proof the task succeeded -- this sandbox cannot check your intent.",
+        "Read the output below and confirm it actually answers what was asked "
+        "before you report anything to the user.",
+    )
+
+
+def _render(ns: str, source: str, code_result, artifacts) -> str:
+    """Render one execution as the single text block the model reads.
+
+    The layout is deliberate: a weak model anchors on the FIRST and LAST lines,
+    so the honest verdict opens the block and the instruction closes it, and
+    stderr sits above stdout because it carries the reason for the verdict.
+    """
+    status, meaning, next_action = _verdict(code_result, artifacts)
+    lines: list[str] = [f"execution_status: {status}", meaning, "", _banner(ns, source)]
 
     stderr = code_result.stderr.strip()
     if stderr:
         lines.append("\n--- stderr ---")
         lines.append(stderr)
+
+    stdout = code_result.stdout.rstrip("\n")
+    lines.append("\n--- stdout ---")
+    lines.append(stdout if stdout else "(nothing was printed -- only what you print() comes back)")
+
+    if code_result.result_repr and not stdout:
+        lines.append("\n--- last expression ---")
+        lines.append(code_result.result_repr)
 
     lines.append("\n--- artifacts ---")
     if artifacts:
@@ -173,7 +239,25 @@ def _format_response(code_result, artifacts) -> str:
     else:
         lines.append("(no new files created in the workspace)")
 
+    lines.append("\n" + _reminder(ns))
+    lines.append(f"next_action: {next_action}")
     return "\n".join(lines)
+
+
+def _refusal(ns: str, source: str, message: str) -> str:
+    """A refusal before any code ran -- shaped like a failed execution."""
+    return "\n".join([
+        "execution_status: FAILED",
+        "The tool refused the request, so no code ran at all.",
+        "",
+        _banner(ns, source),
+        "",
+        "--- stderr ---",
+        message,
+        "",
+        _reminder(ns),
+        "next_action: Fix the problem described above, then call the tool again.",
+    ])
 
 
 @mcp.tool(
@@ -205,7 +289,7 @@ def execute_python_code(code: str, namespace: str, ctx: Context | None = None) -
     result = kernel.execute(code, timeout=config.EXEC_TIMEOUT)
     after = snapshot()
     artifacts = diff(before, after, config.PROJECT_ROOT)
-    return _wrap(ns, source, _format_response(result, artifacts))
+    return _render(ns, source, result, artifacts)
 
 
 def _resolve_workspace_file(file_path: str) -> tuple[Path | None, str | None]:
@@ -332,6 +416,41 @@ def _display_paths(target: Path) -> tuple[str, str]:
     return link, inner
 
 
+# Executes the file's source directly in the interactive namespace. IPython's
+# user namespace is already named "__main__", so a script's
+# `if __name__ == "__main__":` block runs -- and because names land in globals()
+# as they are bound, they survive sys.exit() and even a crash.
+#
+# runpy.run_path (used before) handed its namespace back only on a clean return,
+# so the ordinary `sys.exit(main())` ending left NOTHING in the kernel, while
+# IPython reported the SystemExit as ERROR on top of that. _sandbox_exit_code is
+# read back by the kernel's probe (see kernel_manager._PROBE_CODE).
+_RUN_FILE_TEMPLATE = """\
+import sys as _sb_sys
+_sandbox_exit_code = None
+_sb_path = {path}
+_sb_prev_file = globals().get('__file__')
+_sb_prev_argv = _sb_sys.argv
+__file__ = _sb_path
+_sb_sys.argv = [_sb_path]
+try:
+    with open(_sb_path, 'r', encoding='utf-8') as _sb_fh:
+        _sb_src = _sb_fh.read()
+    exec(compile(_sb_src, _sb_path, 'exec'), globals())
+except SystemExit as _sb_exc:
+    _sandbox_exit_code = 0 if _sb_exc.code is None else _sb_exc.code
+finally:
+    _sb_sys.argv = _sb_prev_argv
+    if _sb_prev_file is None:
+        globals().pop('__file__', None)
+    else:
+        __file__ = _sb_prev_file
+    for _sb_name in ('_sb_sys', '_sb_path', '_sb_prev_file', '_sb_prev_argv',
+                     '_sb_fh', '_sb_src', '_sb_exc', '_sb_name'):
+        globals().pop(_sb_name, None)
+"""
+
+
 @mcp.tool(
     description=(
         "Run an existing Python (.py) file from the ./workspace directory in "
@@ -356,30 +475,22 @@ def run_python_file(file_path: str, namespace: str, ctx: Context | None = None) 
     config.ensure_workspace()
     resolved, err = _resolve_workspace_file(file_path)
     if err is not None:
-        return _wrap(ns, source, f"execution_status: ERROR\n\n--- stderr ---\n{err}")
+        return _refusal(ns, source, err)
     if resolved.suffix.lower() != ".py":
         err = (
             f"Refused: '{resolved.name}' is not a .py file. run_python_file only "
             "runs Python scripts; use execute_python_code to open or parse other "
             "file types."
         )
-        return _wrap(ns, source, f"execution_status: ERROR\n\n--- stderr ---\n{err}")
+        return _refusal(ns, source, err)
 
     before = snapshot()
-    # Run the file as __main__ so script semantics apply, then merge its public
-    # names into the interactive namespace so state persists for later calls.
-    code = (
-        "import runpy as _runpy\n"
-        f"_result_ns = _runpy.run_path({str(resolved)!r}, run_name='__main__')\n"
-        "globals().update({_k: _v for _k, _v in _result_ns.items() "
-        "if not _k.startswith('__')})\n"
-        "del _runpy, _result_ns\n"
-    )
+    code = _RUN_FILE_TEMPLATE.format(path=repr(str(resolved)))
     kernel = POOL.get(ns)
     result = kernel.execute(code, timeout=config.EXEC_TIMEOUT)
     after = snapshot()
     artifacts = diff(before, after, config.PROJECT_ROOT)
-    return _wrap(ns, source, _format_response(result, artifacts))
+    return _render(ns, source, result, artifacts)
 
 
 @mcp.tool(

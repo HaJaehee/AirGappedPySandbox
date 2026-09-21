@@ -58,14 +58,18 @@ across tool calls**, giving low latency on follow-ups.
 4. `snapshot()` again — the "after" set.
 5. `artifacts.diff(before, after)` → any new/changed workspace files become
    `Artifact` objects; images render as `![](...)`, others as `[](...)`.
-6. `_format_response()` assembles one text block:
-   `execution_status`, `--- stdout ---`, optional `--- last expression ---`
-   (only when nothing was printed), `--- stderr ---`, `--- artifacts ---`.
+6. `_verdict()` grades the run, and `_render()` assembles one text block:
+   `execution_status` + what it means, the namespace banner, `--- stderr ---`,
+   `--- stdout ---`, optional `--- last expression ---` (only when nothing was
+   printed), `--- artifacts ---`, and a closing `next_action:` instruction.
+   The verdict leads and the instruction closes because a weak model anchors on
+   the first and last lines (see `11`).
 7. That text is returned to the LLM via MCP.
 
-`run_python_file` is the same flow, except step 3 runs
-`runpy.run_path(<resolved>, run_name='__main__')` and then merges the file's
-public names into the kernel namespace (see `03`).
+`run_python_file` is the same flow, except step 3 `exec`s the file's compiled
+source straight into the kernel namespace with `__file__`/`sys.argv` set, so the
+`if __name__ == "__main__":` block runs and the file's names survive even a
+`sys.exit()` or a crash (see `03` and `11`).
 
 ## Isolation & safety model
 

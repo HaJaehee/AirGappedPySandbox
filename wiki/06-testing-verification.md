@@ -6,7 +6,7 @@ Verify on the **real WinPython** (`dist/AirGappedPySandbox/WPy64-313130/python/
 python.exe`), not only the dev venv. The dev venv proves logic; WinPython proves
 the actual shipped runtime.
 
-## 1. Core smoke tests — `test_core.py` (14 checks)
+## 1. Core smoke tests — `test_core.py` (65 checks)
 
 Kernel + artifact layer, no MCP needed.
 
@@ -69,10 +69,15 @@ This is the evidence that the package is genuinely usable offline.
 
 ## What is NOT covered by automated tests (gaps)
 
-- No permanent regression test for the MCP tools (`run_python_file`, the offline
-  capability run were verified ad-hoc, not committed). **Candidate improvement:**
-  add `test_server.py` using `mcp.call_tool` — but keep it separate from
-  `test_core.py` so `test_core` stays MCP-free.
+- The offline capability run (§4) is still ad-hoc, not committed.
+  **Candidate improvement:** add `test_server.py` using `mcp.call_tool` — but
+  keep it separate from `test_core.py` so `test_core` stays MCP-free.
+  (`run_python_file` and the execution verdicts ARE committed now: `test_core.py`
+  calls `server.*` directly and skips those checks when the MCP SDK is absent.)
+- **Nothing tests a failure the sandbox cannot observe.** A model that wraps its
+  own code in `try/except` and swallows the exception still gets
+  `RAN_UNVERIFIED`; only the Phase 3 `expect` argument in
+  `11-execution-verdict-plan.md` would close that, and it is not built.
 - No test simulating an actual network cut (relied on reasoning: no runtime
   network calls; loopback only).
 - No large-file / long-running performance test.

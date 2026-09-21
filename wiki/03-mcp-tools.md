@@ -19,30 +19,50 @@ Run Python in the namespace's stateful kernel. Variables/imports persist across
 calls **within that namespace**. Response is wrapped with an `active_namespace:`
 banner + trailing reminder.
 
-Returned text block fields:
-- `execution_status:` — `SUCCESS` | `ERROR` | `TIMEOUT`
+Returned text block fields, in the order the model reads them:
+- `execution_status:` (first line) + a one-line explanation of what it means:
+  | value | meaning |
+  |---|---|
+  | `RAN_UNVERIFIED` | finished without raising — **not** proof the task worked |
+  | `RAN_NO_OUTPUT` | finished, but printed nothing and changed no file |
+  | `RAN_WITH_ERRORS` | finished, but errors were reported while it ran |
+  | `FAILED` | raised, exited non-zero, or the tool refused the request |
+  | `TIMEOUT` | interrupted at the limit; did not finish |
+
+  There is no `SUCCESS` value, by design — see
+  [11-execution-verdict-plan.md](11-execution-verdict-plan.md).
+- `active_namespace:` banner
+- `--- stderr ---` — cleaned traceback / warnings (ANSI stripped). Placed
+  **above** stdout: it carries the reason for the verdict.
 - `--- stdout ---` — everything `print()`ed
 - `--- last expression ---` — `repr` of the last expression, **only shown when
-  nothing was printed** (design choice in `_format_response`)
-- `--- stderr ---` — cleaned traceback / warnings (ANSI stripped)
+  nothing was printed** (design choice in `_render`)
 - `--- artifacts ---` — Markdown links to new/changed `./workspace` files
+- `[reminder]` namespace line, then `next_action:` (last line) — the one
+  instruction the model is told to obey
 
 ## `run_python_file(file_path: str, namespace: str) -> str`
 
 Run an existing `.py` file from `./workspace` as a script. Added in commit
 `229fb8a`; gained `namespace` with the routing change.
 
-- Executes via `runpy.run_path(resolved, run_name='__main__')` → the file's
-  `if __name__ == '__main__':` block **does** run.
-- Afterwards the file's top-level names are merged into the kernel namespace, so
-  its variables/functions are usable in later `execute_python_code` calls.
+- Executes the file's compiled source in the kernel namespace with `__file__`
+  and `sys.argv[0]` set → the file's `if __name__ == '__main__':` block **does**
+  run (IPython's user namespace is already called `__main__`).
+- The file's top-level names land in the kernel namespace as they are bound, so
+  they are usable in later `execute_python_code` calls **even if the script ends
+  in `sys.exit()` or crashes part-way**. (Until v0.5.0 this used
+  `runpy.run_path`, which handed its namespace back only on a clean return — so
+  the ordinary `sys.exit(main())` ending left nothing behind *and* was reported
+  as `ERROR`.)
+- `sys.exit(0)` / `sys.exit()` is a normal ending; a non-zero code is `FAILED`.
 - Same output shape as `execute_python_code`.
 - **Isolation:** `file_path` is resolved by `_resolve_workspace_file` and must
   land **inside** the workspace. Accepts `sample.py`, `./workspace/sample.py`
   (the prefix is stripped and the rest read as workspace-relative), bare names,
   and absolute paths within the workspace. Paths resolving outside →
-  `execution_status: ERROR` ("outside the workspace"); missing file → ERROR
-  ("not found"); a non-`.py` suffix → ERROR ("is not a .py file"), checked
+  `execution_status: FAILED` ("outside the workspace"); missing file → FAILED
+  ("not found"); a non-`.py` suffix → FAILED ("is not a .py file"), checked
   **before** the kernel is touched.
 
 ## `write_workspace_file(filename: str, content: str, overwrite: bool = False) -> str`

@@ -28,6 +28,7 @@ work is packaging/hardening/documentation, not greenfield build.
 | [08-roadmap-open-questions.md](08-roadmap-open-questions.md) | What is not done, backlog, and open questions for the user. |
 | [09-namespace-routing.md](09-namespace-routing.md) | **Per-conversation isolation** design, rationale, and limits (implemented). |
 | [10-environment-and-paths.md](10-environment-and-paths.md) | **Read first for orientation.** Where everything lives, versions, git state, and the C:/D: path caveat. |
+| [11-execution-verdict-plan.md](11-execution-verdict-plan.md) | 실행 판정이 `SUCCESS`를 남발해 sLLM이 실패를 성공으로 오인하던 결함과 그 수정. **Phase 1·2·4 구현됨 (v0.5.0), Phase 3(`expect` 검증) 미구현.** |
 | [project-facts.json](project-facts.json) | Machine-readable facts (paths, versions, env vars, tools, verification status). Parse this instead of scraping prose. |
 | [tool-specs.xml](tool-specs.xml) | Structured catalog of the MCP tool interfaces (input/output schema). |
 
