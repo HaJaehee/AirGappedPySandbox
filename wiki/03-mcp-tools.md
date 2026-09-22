@@ -93,6 +93,10 @@ Install distributions from the company's intranet PyPI mirror. Added in v0.6.0.
   | the index cannot be reached | `probe_index()` — **not** pip's output, which says nothing about it when retries are off |
   | pip dropped a plain-http index as untrusted | pip's "is not a trusted or secure host" warning → tells the user to set `SANDBOX_PIP_TRUSTED_HOST` |
   | index reachable, package genuinely absent | not-found markers **and** a successful probe |
+- `install_status: RUNNING` means the install outlived `SANDBOX_TOOL_BUDGET`
+  and is still going on a background thread. **It is not a failure.** The
+  response names the exact `packages` string to resend; the repeat call joins
+  the same job (it does not start a second pip) and returns the final verdict.
 - Short-circuit: if every requested name is bare (no version pin) and already
   importable, pip is not run at all.
 

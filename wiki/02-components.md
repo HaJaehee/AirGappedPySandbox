@@ -15,7 +15,8 @@ All configuration in one place. Reads env vars, falls back to sane defaults.
 | `PROJECT_ROOT` | — | dir of `config.py` | Anchor for a *relative* `SANDBOX_WORKSPACE` and for chat-link paths. |
 | `WORKSPACE_DIR` | `SANDBOX_WORKSPACE` | `PROJECT_ROOT/workspace` | Isolated I/O dir, **and the kernel's working directory**. A relative env value resolves against `PROJECT_ROOT`, not the host's cwd. |
 | `KERNEL_PYTHON` | `SANDBOX_KERNEL_PYTHON` | `sys.executable` | Interpreter that runs the kernel (the portable Python). |
-| `EXEC_TIMEOUT` | `SANDBOX_EXEC_TIMEOUT` | `60` | Per-call timeout (s). |
+| `TOOL_BUDGET` | `SANDBOX_TOOL_BUDGET` | `45` | **How long one tool call may block before it must answer something.** Must stay under the MCP client's own timeout (60s in the official SDK). |
+| `EXEC_TIMEOUT` | `SANDBOX_EXEC_TIMEOUT` | `45` | Per-call timeout (s). Kept under `TOOL_BUDGET`; was 60, which raced the client's 60s timeout. |
 | `STARTUP_TIMEOUT` | `SANDBOX_STARTUP_TIMEOUT` | `60` | Kernel boot timeout (s). |
 | `MAX_STREAM_CHARS` | `SANDBOX_MAX_STREAM_CHARS` | `20000` | Cap on returned stdout/stderr (0 = unlimited). |
 | `MAX_WRITE_BYTES` | `SANDBOX_MAX_WRITE_BYTES` | `1048576` | Cap on one `write_workspace_file` call (0 = unlimited). |
@@ -73,6 +74,11 @@ Everything `install_python_packages` needs, and nothing that touches MCP.
 - **`effective_index()`** — the URL pip will *really* use: `SANDBOX_PIP_INDEX_URL`,
   else `pip config list`, else `PIP_INDEX_URL`, else the public PyPI. Reporting
   that URL is usually enough for a user to spot an unconfigured host.
+- **`start_or_attach(specs)` / `collect(job)`** — installs run on a background
+  thread, keyed by the sorted spec list. A repeat call with the same packages
+  *joins* the running job rather than launching a second pip, which is what
+  makes "call again to collect the result" safe to tell a model. `collect()`
+  removes a finished job so the same install can be run again later.
 - **`probe_index(url)` / `diagnose(report)`** — **read this before touching the
   failure paths.** With `PIP_RETRIES=0`, pip prints *nothing* about an
   unreachable index: a mirror that does not resolve and a package that is not on

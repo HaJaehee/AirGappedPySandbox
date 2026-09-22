@@ -17,8 +17,10 @@ Run:  python server.py           (stdio transport, for AnythingLLM)
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
+import time
 from pathlib import Path
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -624,6 +626,42 @@ def _install_block(ns: str, source: str, status: str, headline: str,
     return "\n".join(lines)
 
 
+async def _report_progress(ctx: Context | None, job) -> None:
+    """Tell the client we are still alive, if it asked to be told.
+
+    Some MCP clients extend their timeout while progress arrives. Those that do
+    not simply ignore this -- the real protection against the client giving up
+    is the budget in _await_install, not these notifications.
+    """
+    if ctx is None:
+        return
+    try:
+        await ctx.report_progress(
+            min(job.elapsed, config.PIP_TIMEOUT), config.PIP_TIMEOUT,
+            f"pip install running ({job.elapsed:.0f}s)",
+        )
+    except Exception:  # noqa: BLE001 - no client support, or no progress token
+        pass
+
+
+async def _await_install(job, deadline: float, ctx: Context | None):
+    """Wait for a background install, but never past ``deadline``.
+
+    Returns the finished InstallReport, or None when the budget ran out and the
+    install is still going.
+    """
+    last_ping = 0.0
+    while True:
+        if job.done.is_set():
+            return pip_installer.collect(job)
+        if time.monotonic() >= deadline:
+            return None
+        await asyncio.sleep(0.5)
+        if job.elapsed - last_ping >= 5:
+            last_ping = job.elapsed
+            await _report_progress(ctx, job)
+
+
 @mcp.tool(
     description=(
         "Install Python packages from the company's internal PyPI mirror into "
@@ -641,23 +679,36 @@ def _install_block(ns: str, source: str, status: str, headline: str,
         "Packages go into a separate virtual environment, never into the "
         "bundled Python, and become importable in every live namespace "
         "immediately -- no kernel restart, so your loaded data survives.\n\n"
-        "The reply starts with `install_status: INSTALLED` or "
-        "`install_status: FAILED`. INSTALLED means the kernel itself confirmed "
-        "the package and reports its version, not merely that pip exited 0. "
-        "FAILED explains what went wrong; the usual cause is that this machine "
+        "The reply starts with `install_status:` INSTALLED, RUNNING or FAILED.\n"
+        "INSTALLED: the kernel itself confirmed each package and reports its "
+        "version -- not merely that pip exited 0.\n"
+        "RUNNING: NOT a failure. Downloading can take longer than one tool "
+        "call, so the install continues in the background. Call this tool "
+        "again immediately with the SAME packages and namespace to collect the "
+        "result; that joins the running install, it does not start a second "
+        "one. Repeat until you get INSTALLED or FAILED.\n"
+        "FAILED: explains what went wrong. The usual cause is that this machine "
         "was never pointed at the mirror, which is for the USER to fix -- "
         "report it instead of retrying."
     )
 )
-def install_python_packages(packages: str, namespace: str,
-                            ctx: Context | None = None) -> str:
+async def install_python_packages(packages: str, namespace: str,
+                                  ctx: Context | None = None) -> str:
     """Install ``packages`` into the sandbox venv and verify them in the kernel.
+
+    Async, and the pip run happens on a background thread, because an MCP client
+    cancels a request that outruns its own timeout (60s in the official SDK;
+    AnythingLLM shows it as "Context server request timeout"). A mirror download
+    -- plus creating the venv on the very first call -- goes past that easily,
+    which made a perfectly healthy mirror look broken. So this answers within
+    SANDBOX_TOOL_BUDGET no matter what, and says how to collect a slow result.
 
     Args:
         packages: Distribution names separated by spaces or commas, each
               optionally carrying a version specifier ("polars>=1.0").
         namespace: Your conversation's namespace id (see execute_python_code).
     """
+    deadline = time.monotonic() + config.TOOL_BUDGET
     ns, source = _resolve_namespace(namespace, ctx)
     specs, rejected = pip_installer.parse_requests(packages)
 
@@ -685,23 +736,54 @@ def install_python_packages(packages: str, namespace: str,
             [], "Ask for the ones you actually need, in smaller batches.")
 
     names = [pip_installer.dist_name(spec) for spec in specs]
-    kernel = POOL.get(ns)
-    before = kernel.package_versions(names)
+    kernel = await asyncio.to_thread(POOL.get, ns)
 
-    # Nothing to do: every requested name is already importable and none of them
-    # pinned a version. Saves a pointless round trip to the mirror when a model
-    # reflexively "installs" pandas.
-    if all(spec == pip_installer.dist_name(spec) for spec in specs) and \
-            all(before.get(name) for name in names):
+    # A job already in flight for exactly these packages means this is the model
+    # coming back to collect a result, as a RUNNING answer told it to. Go
+    # straight to it: re-running the "already importable?" shortcut here could
+    # answer from a half-finished install and strand the job in the registry.
+    job = pip_installer.peek(specs)
+    before: dict[str, str | None] = {}
+    if job is None:
+        before = await asyncio.to_thread(kernel.package_versions, names)
+        # Nothing to do: every requested name is already importable and none of
+        # them pinned a version. Saves a pointless round trip to the mirror when
+        # a model reflexively "installs" pandas.
+        if all(spec == pip_installer.dist_name(spec) for spec in specs) and \
+                all(before.get(name) for name in names):
+            return _install_block(
+                ns, source, "INSTALLED",
+                f"{len(names)} package(s) were already importable; pip was not run.",
+                ["\n--- packages ---"]
+                + [f"{name} {before[name]}  (already available)" for name in names],
+                "Import them in your next execute_python_code call, with the "
+                "same namespace.")
+        job = pip_installer.start_or_attach(specs)
+
+    report = await _await_install(job, deadline, ctx)
+
+    if report is None:
+        # Still going. This is the case that used to surface as the client's own
+        # "Context server request timeout", with the install invisibly
+        # continuing and no way for the model to learn how it ended.
+        again = " ".join(job.specs)
+        index_url, index_origin = await asyncio.to_thread(pip_installer.effective_index)
         return _install_block(
-            ns, source, "INSTALLED",
-            f"{len(names)} package(s) were already importable; pip was not run.",
-            ["\n--- packages ---"]
-            + [f"{name} {before[name]}  (already available)" for name in names],
-            "Import them in your next execute_python_code call, with the same "
-            "namespace.")
-
-    report = pip_installer.install(specs)
+            ns, source, "RUNNING",
+            f"pip is still working after {job.elapsed:.0f}s. This is NOT a "
+            "failure: the install carries on in the background.",
+            ["\n--- what is happening ---",
+             "Downloading and installing can outlast a single tool call, so "
+             "this call is answering early rather than being cut off. Nothing "
+             "has been lost.",
+             "\n--- pip ---",
+             f"index:   {index_url}  (from {index_origin})",
+             f"venv:    {config.VENV_DIR}",
+             f"elapsed: {job.elapsed:.0f}s of at most {config.PIP_TIMEOUT}s"],
+            f'Call install_python_packages again, right now, with exactly '
+            f'packages="{again}" and namespace="{ns}" to collect the result. '
+            "Do not change the package list and do not start another install "
+            "in between.")
 
     pip_lines = [
         "\n--- pip ---",
@@ -725,9 +807,10 @@ def install_python_packages(packages: str, namespace: str,
             "if the task allows it.")
 
     site_dir = pip_installer.site_packages_dir()
+    busy: list[str] = []
     if site_dir is not None:
-        POOL.add_site_dir_everywhere(str(site_dir))
-    after = kernel.package_versions(names)
+        busy = await asyncio.to_thread(POOL.add_site_dir_everywhere, str(site_dir))
+    after = await asyncio.to_thread(kernel.package_versions, names)
     missing = [name for name in names if not after.get(name)]
 
     if missing:
@@ -753,6 +836,11 @@ def install_python_packages(packages: str, namespace: str,
         unchanged = before.get(name) and before.get(name) == after.get(name)
         packages_block.append(
             f"{name} {after[name]}" + ("  (already available)" if unchanged else ""))
+    if busy:
+        packages_block.append(
+            "\nnote: namespace(s) " + ", ".join(busy) + " were running code and "
+            "could not be refreshed; they will see the package when their "
+            "kernel next starts. Your own namespace is ready.")
 
     return _install_block(
         ns, source, "INSTALLED",
@@ -793,6 +881,18 @@ def main() -> None:
             POOL.prewarm()
         except Exception as exc:  # noqa: BLE001 - report and continue lazily
             print(f"[sandbox] Warning: kernel warm-start failed: {exc}")
+        # Build the package venv now too. Creating it can take tens of seconds
+        # on the portable Python, and paying that inside the first
+        # install_python_packages call is what pushed it past the client's
+        # timeout on a host whose mirror was working perfectly well.
+        try:
+            created, err = pip_installer.ensure_venv()
+            if err:
+                print(f"[sandbox] Warning: package venv unavailable: {err}")
+            elif created:
+                print(f"[sandbox] Created package venv at {config.VENV_DIR}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[sandbox] Warning: package venv setup failed: {exc}")
     try:
         mcp.run()  # stdio transport by default
     finally:

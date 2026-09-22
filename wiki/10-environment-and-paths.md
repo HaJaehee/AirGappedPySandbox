@@ -48,7 +48,13 @@ wiki/                                                     ← this handoff (EN)
 ## Environment variables (all optional; see `02` for defaults)
 
 `SANDBOX_KERNEL_PYTHON`, `SANDBOX_WORKSPACE`, `SANDBOX_EXEC_TIMEOUT`,
-`SANDBOX_STARTUP_TIMEOUT`, `SANDBOX_MAX_STREAM_CHARS`, `SANDBOX_LAZY_START`.
+`SANDBOX_STARTUP_TIMEOUT`, `SANDBOX_MAX_STREAM_CHARS`, `SANDBOX_LAZY_START`,
+`SANDBOX_TOOL_BUDGET`.
+
+`SANDBOX_TOOL_BUDGET` (45s) must stay **below the MCP client's own request
+timeout** — 60s in the official SDK. Above it, the client cancels first and the
+user sees "Context server request timeout" instead of anything this server
+wrote. See `07`.
 
 Package installs (v0.6.0): `SANDBOX_PIP_INDEX_URL`, `SANDBOX_PIP_TRUSTED_HOST`,
 `SANDBOX_VENV`, `SANDBOX_PIP_TIMEOUT`, `SANDBOX_PIP_NETWORK_TIMEOUT`,

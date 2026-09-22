@@ -6,6 +6,7 @@ Run with the dev venv:  ./.devvenv/Scripts/python.exe test_core.py
 import os
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -332,6 +333,7 @@ def check_pip_installer():
     shape of the failure this has to report well: a machine whose mirror is
     not configured or not reachable.
     """
+    import asyncio
     import tempfile
 
     try:
@@ -340,6 +342,10 @@ def check_pip_installer():
     except ImportError as exc:
         print(f"[SKIP] pip installer checks (import failed: {exc})")
         return
+
+    def call(packages):
+        """install_python_packages is async (see check_install_budget)."""
+        return asyncio.run(server.install_python_packages(packages, "_smoke_pip"))
 
     # 1. Request parsing: names in, everything else out.
     ok, bad = pip_installer.parse_requests("polars, rapidfuzz>=3.0 numpy==2.1")
@@ -399,20 +405,110 @@ def check_pip_installer():
         shutil.rmtree(tmp, ignore_errors=True)
 
     # 6. The tool refuses bad input before pip, and before touching a kernel.
-    out = server.install_python_packages("polars --index-url=http://evil", "_smoke_pip")
+    out = call("polars --index-url=http://evil")
     check("install tool: refuses pip flags",
           out.startswith("install_status: FAILED") and "--index-url=http://evil" in out,
           out[:160])
-    out = server.install_python_packages("   ", "_smoke_pip")
+    out = call("   ")
     check("install tool: refuses an empty request",
           out.startswith("install_status: FAILED"), out[:160])
-    out = server.install_python_packages(
-        " ".join(f"pkg{i}" for i in range(config.MAX_PACKAGES_PER_CALL + 1)),
-        "_smoke_pip")
+    out = call(" ".join(f"pkg{i}" for i in range(config.MAX_PACKAGES_PER_CALL + 1)))
     check("install tool: enforces the per-call package limit",
           out.startswith("install_status: FAILED") and "limit is" in out, out[:160])
     check("install tool: a refusal still ends with an instruction",
           out.splitlines()[-1].startswith("next_action:"))
+
+
+def check_install_budget():
+    """A slow mirror must not look like a broken one.
+
+    The client cancels a request that outlives its own timeout -- AnythingLLM
+    calls that "Context server request timeout" -- so no tool call may block
+    for the length of a pip download. Nothing here runs pip: the install is
+    replaced by a sleep, because what is under test is the answering, not the
+    installing.
+    """
+    import asyncio
+    import importlib.metadata
+
+    try:
+        import pip_installer
+        import server
+        from kernel_manager import POOL
+    except ImportError as exc:
+        print(f"[SKIP] install budget checks (import failed: {exc})")
+        return
+    try:
+        pinned = f"numpy=={importlib.metadata.version('numpy')}"
+    except Exception:  # noqa: BLE001 - numpy missing on this interpreter
+        print("[SKIP] install budget checks (numpy not installed)")
+        return
+
+    def slow_install(specs):
+        time.sleep(4)
+        return pip_installer.InstallReport(
+            ok=True, returncode=0, seconds=4.0,
+            index_url="http://test-mirror/simple", index_origin="test")
+
+    real_install, real_budget = pip_installer.install, config.TOOL_BUDGET
+    pip_installer.install, config.TOOL_BUDGET = slow_install, 1
+    try:
+        started = time.monotonic()
+        out = asyncio.run(server.install_python_packages(pinned, "_smoke_budget"))
+        elapsed = time.monotonic() - started
+        check("install: a slow install answers RUNNING instead of blocking",
+              out.startswith("install_status: RUNNING"), f"{out[:120]} ({elapsed:.1f}s)")
+        check("install: RUNNING is not phrased as a failure", "NOT a failure" in out)
+        check("install: RUNNING says exactly how to collect the result",
+              f'packages="{pinned}"' in out, out.splitlines()[-1][:160])
+
+        job = pip_installer.peek([pinned])
+        check("install: the install really did carry on in the background",
+              job is not None)
+        if job is not None:
+            job.done.wait(30)
+
+        out = asyncio.run(server.install_python_packages(pinned, "_smoke_budget"))
+        check("install: calling back collects the finished result",
+              out.startswith("install_status: INSTALLED"), out[:160])
+        check("install: the finished job is cleared, so a later install re-runs",
+              pip_installer.peek([pinned]) is None)
+    finally:
+        pip_installer.install, config.TOOL_BUDGET = real_install, real_budget
+        POOL.shutdown_all()
+
+
+def check_busy_kernel_is_not_waited_for():
+    """Refreshing sys.path in OTHER namespaces must not spend the tool budget.
+
+    One of them may be halfway through a long cell; waiting that out would
+    stall the install for a conversation that is not even installing.
+    """
+    try:
+        from kernel_manager import StatefulKernel
+    except ImportError as exc:
+        print(f"[SKIP] busy-kernel check (import failed: {exc})")
+        return
+
+    kernel = StatefulKernel()  # never started; only its lock matters here
+    release = threading.Event()
+
+    def hold_it():
+        with kernel._lock:
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_it, daemon=True)
+    holder.start()
+    time.sleep(0.2)
+    try:
+        started = time.monotonic()
+        refreshed = kernel.add_site_dir("C:/does-not-matter", wait=0.5)
+        elapsed = time.monotonic() - started
+        check("kernel: add_site_dir gives up on a busy kernel", refreshed is False)
+        check("kernel: and gives up promptly", elapsed < 2, f"{elapsed:.1f}s")
+    finally:
+        release.set()
+        holder.join(timeout=5)
 
 
 def main():
@@ -508,6 +604,10 @@ def main():
 
     # 14. package installs and, above all, how their failures are reported.
     check_pip_installer()
+
+    # 15. answering inside the MCP client's timeout.
+    check_busy_kernel_is_not_waited_for()
+    check_install_budget()
     print()
     if check.failed:
         print(f"{check.failed} check(s) FAILED")

@@ -21,6 +21,15 @@ same "No matching distribution found". So when an install fails, this module
 stops guessing from pip's text and asks the index itself -- see
 :func:`effective_index` and :func:`probe_index`.
 
+Installs also run on a **background thread**. An MCP client cancels a request
+that outlives its own timeout -- the official SDK's default is 60 s, and
+AnythingLLM surfaces the cancellation as "Context server request timeout" -- but
+pulling a wheel from a mirror, plus creating the venv on the first call,
+routinely takes longer than that. Blocking the tool call until pip finished
+meant a working mirror still looked broken. So :func:`start_or_attach` launches
+the install and the tool hands back a RUNNING answer well inside the client's
+patience, then :func:`collect` returns the result on a later call.
+
 The kernel picks the venv's site-packages up through ``site.addsitedir`` -- see
 ``kernel_manager._site_dir_code``.
 """
@@ -316,6 +325,77 @@ def _tail(text: str) -> str:
     if len(text) <= _MAX_PIP_OUTPUT:
         return text
     return "[... earlier pip output trimmed ...]\n" + text[-_MAX_PIP_OUTPUT:]
+
+
+# --- background jobs ---------------------------------------------------------
+
+
+@dataclass
+class InstallJob:
+    """One pip run, executing on its own thread."""
+
+    specs: list[str]
+    started: float
+    done: threading.Event = field(default_factory=threading.Event)
+    report: InstallReport | None = None
+
+    @property
+    def elapsed(self) -> float:
+        return time.monotonic() - self.started
+
+
+_JOBS: dict[str, InstallJob] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def job_key(specs: list[str]) -> str:
+    """Identity of an install, independent of the order the model listed it in."""
+    return " ".join(sorted(specs))
+
+
+def peek(specs: list[str]) -> InstallJob | None:
+    """The job for this exact request, running or finished, if there is one."""
+    with _JOBS_LOCK:
+        return _JOBS.get(job_key(specs))
+
+
+def start_or_attach(specs: list[str]) -> InstallJob:
+    """Start this install in the background, or join one already in flight.
+
+    Joining matters: the model is *told* to call again with the same arguments
+    to collect the result, so the repeat call must not launch a second pip.
+    """
+    key = job_key(specs)
+    with _JOBS_LOCK:
+        existing = _JOBS.get(key)
+        if existing is not None:
+            return existing
+        job = InstallJob(specs=list(specs), started=time.monotonic())
+        _JOBS[key] = job
+
+    def _run() -> None:
+        try:
+            job.report = install(job.specs)
+        except Exception as exc:  # noqa: BLE001 - a dead thread must still answer
+            job.report = InstallReport(error=f"The install thread crashed: {exc!r}")
+        finally:
+            job.done.set()
+
+    threading.Thread(target=_run, name="pip-install", daemon=True).start()
+    return job
+
+
+def collect(job: InstallJob) -> InstallReport | None:
+    """Take a finished job's result out of the registry, or None if still running.
+
+    Removing it is what lets the same packages be installed again later instead
+    of replaying a stale result forever.
+    """
+    if not job.done.is_set():
+        return None
+    with _JOBS_LOCK:
+        _JOBS.pop(job_key(job.specs), None)
+    return job.report
 
 
 # --- diagnosis ---------------------------------------------------------------

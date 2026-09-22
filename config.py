@@ -47,7 +47,7 @@ def _env_int(name: str, default: int) -> int:
 
 # Single source of truth for the project version. Keep in sync with the version
 # history table in README.md. The server reports this over MCP (serverInfo).
-VERSION: str = "0.6.0"
+VERSION: str = "0.7.0"
 
 # Project root = directory containing this file. The kernel's working directory
 # is set here so that the "./workspace/..." relative paths used by the LLM
@@ -62,9 +62,23 @@ WORKSPACE_DIR: Path = _env_path("SANDBOX_WORKSPACE", PROJECT_ROOT / "workspace")
 # development but should be set explicitly in production.
 KERNEL_PYTHON: str = os.environ.get("SANDBOX_KERNEL_PYTHON", sys.executable)
 
+# How long ONE tool call may block before it has to answer something.
+#
+# An MCP client cancels a request that outlives its own timeout; the official
+# SDK's default is 60s and AnythingLLM reports the cancellation as "Context
+# server request timeout", which tells the user nothing. Everything this server
+# does inside a call is therefore budgeted to finish first, so the failure the
+# user sees is always OUR description of it.
+TOOL_BUDGET: int = _env_int("SANDBOX_TOOL_BUDGET", 45)
+
 # Hard ceiling on a single execute_python_code call (seconds). On timeout the
 # kernel is interrupted; if it stays wedged it is restarted.
-EXEC_TIMEOUT: int = _env_int("SANDBOX_EXEC_TIMEOUT", 60)
+#
+# Kept under TOOL_BUDGET on purpose. At the old default of 60 this raced the
+# client's own 60s timeout: a long cell was a coin flip between this server's
+# clean TIMEOUT verdict and an opaque client-side cancellation. Raise both (and
+# the client's) together if the host needs longer cells.
+EXEC_TIMEOUT: int = _env_int("SANDBOX_EXEC_TIMEOUT", 45)
 
 # How long to wait for the kernel to come up and answer a first request.
 STARTUP_TIMEOUT: int = _env_int("SANDBOX_STARTUP_TIMEOUT", 60)

@@ -88,7 +88,7 @@
       <param name="namespace" type="string" required="true">Conversation namespace; see namespaceParam.</param>
     </input>
     <output type="text">
-      <field name="install_status" values="INSTALLED|FAILED" desc="FIRST line, followed by a one-line explanation"/>
+      <field name="install_status" values="INSTALLED|FAILED|RUNNING" desc="FIRST line, followed by a one-line explanation. RUNNING is NOT a failure: the install outlived SANDBOX_TOOL_BUDGET and continues on a background thread; the response names the exact packages string to resend, and the repeat call joins the same job instead of starting a second pip."/>
       <section name="packages" desc="each distribution with the version the kernel reports; '(already available)' when it was there before"/>
       <section name="why it failed" desc="on FAILED: one sentence naming what the USER has to fix"/>
       <section name="pip output" desc="on FAILED: tail of pip's own output"/>
@@ -113,7 +113,7 @@
       <case condition="package genuinely absent">not-found markers AND a successful probe -&gt; points at the distribution name (often not the import name) or the mirror's contents</case>
       <case condition="pip exited 0 but the kernel cannot see the package">install_status: FAILED, because pip's exit code proves a download, not an import</case>
     </failureDiagnosis>
-    <timeout envVar="SANDBOX_PIP_TIMEOUT" defaultSeconds="300"/>
+    <timeout envVar="SANDBOX_PIP_TIMEOUT" defaultSeconds="300" note="Ceiling on the background pip run. The TOOL CALL itself never blocks longer than SANDBOX_TOOL_BUDGET (45s), which must stay under the MCP client's own request timeout."/>
   </tool>
 
   <tool name="reset_kernel_state" stateful="false" destructive="memory-only">

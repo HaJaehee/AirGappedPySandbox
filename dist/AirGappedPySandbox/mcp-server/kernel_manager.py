@@ -598,12 +598,23 @@ class StatefulKernel:
             return head + f"\n[sandbox] ...output truncated at {cap} characters."
         return text
 
-    def add_site_dir(self, site_dir: str) -> None:
-        """Make ``site_dir`` importable in this live kernel."""
-        with self._lock:
+    def add_site_dir(self, site_dir: str, wait: float = 5.0) -> bool:
+        """Make ``site_dir`` importable in this live kernel. False if it was busy.
+
+        Bounded rather than blocking: this is called on EVERY live kernel after
+        an install, and one of them may be halfway through a long cell. Waiting
+        out that cell would spend the whole tool budget refreshing a namespace
+        nobody is installing for.
+        """
+        if not self._lock.acquire(timeout=wait):
+            return False
+        try:
             if self._km is None or not self._km.is_alive():
-                return  # a kernel started later picks it up from _STARTUP_CODE
+                return False  # a kernel started later picks it up from startup
             self._run_silent_locked(_site_dir_code(site_dir), timeout=30)
+            return True
+        finally:
+            self._lock.release()
 
     def package_versions(self, names: list[str]) -> dict[str, str | None]:
         """Version of each distribution as THIS kernel sees it, None if absent."""
@@ -715,22 +726,32 @@ class KernelPool:
             self._last_used[ns] = time.monotonic()
             return True
 
-    def add_site_dir_everywhere(self, site_dir: str) -> None:
+    def add_site_dir_everywhere(self, site_dir: str) -> list[str]:
         """Make a just-installed package importable in every live kernel.
 
         Otherwise only the namespace that ran the install would see it until its
         kernel restarted -- and restarting is exactly what the other
         conversations cannot afford, since it drops their loaded data.
+
+        Returns the namespaces that were too busy to refresh; they pick the
+        directory up when their kernel next starts.
         """
         with self._lock:
-            kernels = list(self._kernels.values())
-            if self._reserve is not None:
-                kernels.append(self._reserve)
-        for kernel in kernels:
+            pairs = list(self._kernels.items())
+            reserve = self._reserve
+        busy: list[str] = []
+        for name, kernel in pairs:
             try:
-                kernel.add_site_dir(site_dir)
+                if not kernel.add_site_dir(site_dir):
+                    busy.append(name)
             except Exception:  # noqa: BLE001 - one bad kernel must not block the rest
+                busy.append(name)
+        if reserve is not None:
+            try:
+                reserve.add_site_dir(site_dir)
+            except Exception:  # noqa: BLE001
                 pass
+        return busy
 
     def active_namespaces(self) -> list[str]:
         with self._lock:

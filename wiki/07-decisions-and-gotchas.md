@@ -80,6 +80,38 @@ probes the index itself (`probe_index`) and resolves the URL pip will really use
 (`effective_index`), and each failure names the setting to change.
 `check_environment.py` reports the same thing before any conversation starts.
 
+### The client gives up before we do: "Context server request timeout" (v0.7.0)
+
+Reported from a host whose mirror was healthy — `pip install` worked from the
+shell, both env vars were set — yet every `install_python_packages` call came
+back as *Context server request timeout*. That string is **AnythingLLM's**, not
+this server's: the MCP client cancelled the request. The official MCP SDK
+defaults to a 60s request timeout, and the tool was blocking for the whole pip
+run, which on the first call also included creating the venv. A perfectly good
+mirror therefore looked broken, and the install kept going invisibly with no way
+for the model to learn how it ended.
+
+Three changes, and the first is the general rule:
+
+1. **Nothing may block a tool call longer than `SANDBOX_TOOL_BUDGET` (45s).**
+   The client's patience is the real deadline, so the server's own limits sit
+   under it and the user always sees *our* description of a failure.
+   `EXEC_TIMEOUT` dropped from 60 to 45 for the same reason — at 60 it raced the
+   client and a long cell was a coin flip between a clean `TIMEOUT` verdict and
+   an opaque cancellation.
+2. **Installs run on a background thread** and the tool answers `RUNNING`, with
+   the exact arguments to resend. A repeat call joins the same job, so telling a
+   model to "call again" cannot start a second pip. Progress notifications are
+   sent too, which some clients use to extend their timeout — but they are a
+   bonus, not the mechanism.
+3. **The venv is created at start-up**, next to the kernel warm-start, so the
+   first install does not pay for it.
+
+Related: `add_site_dir` now gives up after 5s on a busy kernel. Refreshing
+`sys.path` in *other* namespaces used to block on their lock, so one namespace
+running a long cell could spend the entire budget of an install belonging to
+somebody else.
+
 ## Windows / offline gotchas
 
 - **Blocking `time.sleep` is NOT interruptible on Windows.** The interrupt event
