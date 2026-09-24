@@ -10,7 +10,7 @@
       "env": {
         "SANDBOX_KERNEL_PYTHON": "C:\\path\\to\\portable-python\\python.exe",
         "SANDBOX_WORKSPACE": "C:\\Users\\loves\\AirGappedPySandbox\\workspace",
-        "SANDBOX_EXEC_TIMEOUT": "60",
+        "SANDBOX_EXEC_TIMEOUT": "45",
         "SANDBOX_PIP_INDEX_URL": "http://pypi-mirror.your-company.local/simple",
         "SANDBOX_PIP_TRUSTED_HOST": "pypi-mirror.your-company.local"
       }

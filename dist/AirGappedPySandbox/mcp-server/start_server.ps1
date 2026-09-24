@@ -28,7 +28,7 @@ if (-not (Test-Path $PortablePython)) {
 
 $env:SANDBOX_KERNEL_PYTHON = $PortablePython
 $env:SANDBOX_WORKSPACE = Join-Path $Here "workspace"
-if (-not $env:SANDBOX_EXEC_TIMEOUT) { $env:SANDBOX_EXEC_TIMEOUT = "60" }
+if (-not $env:SANDBOX_EXEC_TIMEOUT) { $env:SANDBOX_EXEC_TIMEOUT = "45" }
 if ($PipIndexUrl) { $env:SANDBOX_PIP_INDEX_URL = $PipIndexUrl }
 if ($PipTrustedHost) { $env:SANDBOX_PIP_TRUSTED_HOST = $PipTrustedHost }
 

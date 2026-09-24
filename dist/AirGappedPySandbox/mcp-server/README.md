@@ -144,7 +144,7 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
       "env": {
         "SANDBOX_KERNEL_PYTHON": "D:\\AirGappedPySandbox\\WPy64-313130\\python\\python.exe",
         "SANDBOX_WORKSPACE": "D:\\AirGappedPySandbox\\mcp-server\\workspace",
-        "SANDBOX_EXEC_TIMEOUT": "60"
+        "SANDBOX_EXEC_TIMEOUT": "45"
       }
     }
   }
@@ -159,7 +159,7 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 |------|--------|------|
 | `SANDBOX_KERNEL_PYTHON` | 서버 자신의 `python` | 커널을 실행하는 인터프리터(포터블 Python을 가리키게 함). |
 | `SANDBOX_WORKSPACE` | `./workspace` | 격리된 입출력 디렉터리. |
-| `SANDBOX_EXEC_TIMEOUT` | `60` | 호출당 실행 타임아웃(초). |
+| `SANDBOX_EXEC_TIMEOUT` | `45` | 호출당 실행 타임아웃(초). |
 | `SANDBOX_STARTUP_TIMEOUT` | `60` | 커널 부팅 타임아웃(초). |
 | `SANDBOX_MAX_STREAM_CHARS` | `20000` | 반환 stdout/stderr 상한(0 = 무제한). |
 | `SANDBOX_MAX_WRITE_BYTES` | `1048576` | `write_workspace_file` 1회 쓰기 상한(바이트, 0 = 무제한). |

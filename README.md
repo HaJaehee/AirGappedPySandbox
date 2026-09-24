@@ -159,7 +159,7 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
       "env": {
         "SANDBOX_KERNEL_PYTHON": "D:\\AirGappedPySandbox\\WPy64-313130\\python\\python.exe",
         "SANDBOX_WORKSPACE": "D:\\AirGappedPySandbox\\mcp-server\\workspace",
-        "SANDBOX_EXEC_TIMEOUT": "60"
+        "SANDBOX_EXEC_TIMEOUT": "45"
       }
     }
   }

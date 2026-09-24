@@ -31,7 +31,7 @@
       <param name="namespace" type="string" required="true">Conversation namespace; see namespaceParam.</param>
     </input>
     <output type="text" format="commonResponseFormat"/>
-    <timeout envVar="SANDBOX_EXEC_TIMEOUT" defaultSeconds="60"/>
+    <timeout envVar="SANDBOX_EXEC_TIMEOUT" defaultSeconds="45"/>
   </tool>
 
   <tool name="run_python_file" stateful="true" addedIn="229fb8a">
