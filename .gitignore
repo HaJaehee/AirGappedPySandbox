@@ -22,3 +22,5 @@ __pycache__/
 workspace/*
 !workspace/.gitkeep
 .sandbox-venv/
+
+dist/AirGappedPySandbox/mcp-server/
