@@ -508,6 +508,8 @@ def run_python_file(file_path: str, namespace: str, ctx: Context | None = None) 
         "\"reports/out.md\". A leading \"./workspace/\" is accepted and stripped.\n"
         "content  : the exact text to write (UTF-8). Written verbatim.\n"
         "overwrite: pass true only to replace an existing file (default false).\n\n"
+        "If the file is too long to send in one call, write the first part here "
+        "and add the rest with append_workspace_file.\n\n"
         "This tool does NOT execute anything and does NOT need a namespace. "
         "To run a .py file you saved, call run_python_file next."
     )
@@ -577,6 +579,117 @@ def write_workspace_file(filename: str, content: str, overwrite: bool = False) -
     if target.suffix.lower() == ".py":
         lines.append(
             f'\nNext: run it with run_python_file(file_path="{inner_path}", '
+            "namespace=<your namespace>)."
+        )
+    return "\n".join(lines)
+
+
+# Lines of the file shown back after an append, and the width each is cut to.
+_APPEND_TAIL_LINES = 8
+_APPEND_TAIL_WIDTH = 200
+
+
+@mcp.tool(
+    description=(
+        "Add text to the END of a file in ./workspace. Use it for a file too long "
+        "to send in one call: write the first part with write_workspace_file, then "
+        "send the rest here in order, one chunk per call. Never resend what is "
+        "already in the file.\n\n"
+        "filename : path relative to ./workspace (same rules as write_workspace_file). "
+        "Created if it does not exist yet.\n"
+        "content  : the text to add (UTF-8), verbatim. Nothing is inserted between "
+        "chunks, so end each chunk with a newline.\n\n"
+        "The reply shows the last lines of the file, so you can see where the next "
+        "chunk goes. This tool does NOT execute anything and does NOT need a namespace."
+    )
+)
+def append_workspace_file(filename: str, content: str) -> str:
+    """Append ``content`` verbatim to ``filename`` inside ./workspace.
+
+    A model's reply has an output-token limit, and a tool call's arguments are
+    part of that reply. A file longer than one reply can only be built in
+    order, chunk by chunk -- rewriting it whole each time grows every call
+    until it hits the same limit again.
+
+    Args:
+        filename: Path relative to ./workspace. Escapes are rejected.
+        content: Exact text to add, UTF-8 encoded with LF line endings.
+    """
+    target, err = _resolve_new_workspace_path(filename)
+    if err is not None:
+        return f"write_status: ERROR\n\n--- stderr ---\n{err}"
+
+    text = content if content is not None else ""
+    if not text:
+        return "write_status: ERROR\n\n--- stderr ---\nRefused: content is empty -- nothing to append."
+    size = len(text.encode("utf-8"))
+    if config.MAX_WRITE_BYTES and size > config.MAX_WRITE_BYTES:
+        return (
+            "write_status: ERROR\n\n--- stderr ---\n"
+            f"Refused: content is {size} bytes, over the "
+            f"{config.MAX_WRITE_BYTES}-byte limit for one write. "
+            "Split it into smaller chunks."
+        )
+
+    link_path, inner_path = _display_paths(target)
+    if target.exists() and not target.is_file():
+        return (
+            "write_status: ERROR\n\n--- stderr ---\n"
+            f"Refused: '{filename}' is a directory, not a file."
+        )
+
+    created = not target.exists()
+    joined_mid_line = False
+    if not created:
+        try:
+            with open(target, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                if handle.tell():
+                    handle.seek(-1, os.SEEK_END)
+                    joined_mid_line = handle.read(1) != b"\n" and not text.startswith("\n")
+        except OSError as exc:
+            return f"write_status: ERROR\n\n--- stderr ---\nCould not read '{filename}': {exc}"
+
+    before = snapshot()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # newline="\n" for the same reason as write_workspace_file.
+        with open(target, "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        whole = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return f"write_status: ERROR\n\n--- stderr ---\nCould not append to '{filename}': {exc}"
+    after = snapshot()
+    artifacts = diff(before, after, config.PROJECT_ROOT)
+
+    total = len(whole.encode("utf-8"))
+    file_lines = whole.splitlines()
+    action = "created" if created else "appended"
+    lines = [
+        "write_status: SUCCESS",
+        "\n--- file ---",
+        f"./{link_path}  ({action} {size} B; now {total} B, {len(file_lines)} lines)",
+    ]
+    if joined_mid_line:
+        lines.append(
+            "note: the file did not end with a newline, so this chunk continued its "
+            "last line. Start the next chunk with a newline if that was not intended."
+        )
+    start = max(0, len(file_lines) - _APPEND_TAIL_LINES)
+    lines.append(f"\n--- tail (last {len(file_lines) - start} lines) ---")
+    for number, line in enumerate(file_lines[start:], start=start + 1):
+        if len(line) > _APPEND_TAIL_WIDTH:
+            line = line[:_APPEND_TAIL_WIDTH] + " ..."
+        lines.append(f"{number:>6}| {line}")
+    lines.append("\n--- artifacts ---")
+    if artifacts:
+        for art in artifacts:
+            lines.append(f"{art.to_markdown()}  ({art.size / 1024:.1f} KB)")
+    else:
+        lines.append("(warning: the append reported success but no file change was detected)")
+    if target.suffix.lower() == ".py":
+        lines.append(
+            f'\nWhen the file is complete, run it with run_python_file(file_path="{inner_path}", '
             "namespace=<your namespace>)."
         )
     return "\n".join(lines)

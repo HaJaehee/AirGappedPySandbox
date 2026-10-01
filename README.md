@@ -1,6 +1,6 @@
 # 에어갭 Python 샌드박스 — MCP 서버
 
-**버전: v0.7.0** ([변경 이력](#버전-이력))
+**버전: v0.8.0** ([변경 이력](#버전-이력))
 
 본 프로젝트는 MCP(Model Context Protocol)를 통해 LLM에 제공되는 **상태 유지형(stateful) 오프라인 Python 코드 인터프리터**입니다.
 사내망 및 폐쇄망 환경의 LLM(AnythingLLM 에이전트 등)이 수학 계산, 데이터 분석, 차트 시각화, 문서 파싱 등을 수행할 수 있도록 실제 Python 코드를 실행하는 환경을 제공합니다. **외부 인터넷 연결이나 추가적인 `pip install` 없이도**, 사전에 패키징된 포터블 Python 배포판을 기반으로 안정적으로 동작합니다.
@@ -18,7 +18,7 @@ AnythingLLM 에이전트
       │  MCP (stdio)
       ▼
 server.py ── FastMCP 래퍼 ──────────────────────────────────┐
-      │   • execute_python_code / write_workspace_file        │  안전 &
+      │   • execute_python_code / write·append_workspace_file │  안전 &
       │   • workspace 스냅샷 → 아티팩트 링크 (artifacts.py)    │  아티팩트 계층
       ▼                                                        │
 kernel_manager.py ── StatefulKernel (jupyter_client) ─────────┘
@@ -51,6 +51,7 @@ IPython 커널  ← 4GB 포터블 Python으로 실행됨
 - **`execute_python_code(code: str, namespace: str)`** — 지정된 네임스페이스의 영속 커널에서 Python 코드를 실행합니다. 실행 결과 판정값인 `execution_status`(`RAN_UNVERIFIED` / `RAN_NO_OUTPUT` / `RAN_WITH_ERRORS` / `FAILED` / `TIMEOUT`), 캡처된 표준 출력(stdout), 정리된 트레이스백이 포함된 표준 에러(stderr), 그리고 새로 생성된 workspace 파일의 Markdown 링크를 반환합니다. 응답의 **첫 줄에는 실행 판정 결과가, 마지막 줄에는 `next_action:` 후속 조치 지침**이 출력되며, 그사이에 `active_namespace: ns-XXXX`가 명시됩니다. 본 시스템에는 `SUCCESS`라는 판정값이 존재하지 않습니다. 샌드박스는 실패를 증명할 수는 있어도 의도한 과업의 논리적 성공까지 증명할 수는 없으며, 성능이 제한적인 소형 모델이 `SUCCESS` 단어를 보고 실제 결과 검증 없이 과업이 완료된 것으로 오인하는 현상을 방지하기 위함입니다.
 - **`run_python_file(file_path: str, namespace: str)`** — `./workspace` 디렉터리 내의 `.py` 파일을 해당 네임스페이스 커널에서 스크립트 형태로 실행합니다(`if __name__ == '__main__'` 블록 포함 실행). 반환 형식은 `execute_python_code`와 동일하며, 스크립트의 최상위 변수 및 함수는 `sys.exit()`로 종료되거나 실행 중 예외가 발생하더라도 커널 메모리에 그대로 보존됩니다. `sys.exit(0)`은 정상 종료로 인정되며, 0이 아닌 종료 코드는 `FAILED`로 판정합니다. 경로는 격리 환경 보호를 위해 반드시 `./workspace` 내부여야 하며, 외부 경로 접근은 즉시 거부됩니다.
 - **`write_workspace_file(filename: str, content: str, overwrite: bool = False)`** — 텍스트(소스 코드, 메모, CSV, Markdown, JSON 등)를 `./workspace` 내의 파일로 **직접 저장**합니다. 코드를 실행하지 않으므로 `namespace` 인자가 필요하지 않습니다. 파일을 생성하기 위해 "파일을 작성하는 Python 코드"를 모델이 다시 생성할 필요가 없으므로, 소형 모델에서 자주 나타나는 자기참조(self-referential) 코드 생성 오류를 근본적으로 방지합니다. 저장 경로는 `./workspace` 내부로 엄격히 제한되며(`..`, 절대 경로, Windows 예약 장치명 차단), 기존 파일이 이미 존재할 경우 `overwrite=True` 옵션을 명시하지 않으면 덮어쓰지 않습니다.
+- **`append_workspace_file(filename: str, content: str)`** — `./workspace` 내 파일의 **끝에** 텍스트를 그대로 덧붙입니다(v0.8.0). 도구 호출의 인자도 응답 한 번의 출력 한도(`max_tokens`)를 함께 쓰므로, 한 번에 보낼 수 없는 긴 파일은 첫 부분을 `write_workspace_file`로 쓰고 나머지를 이 도구로 순서대로 덧붙입니다. 파일이 없으면 새로 만들고, 조각 사이에 아무것도 끼워 넣지 않습니다. 응답에는 파일 끝 8줄이 줄 번호와 함께 실려 다음 조각을 이어 쓸 위치를 확인할 수 있습니다. 경로 제한과 크기 상한은 `write_workspace_file`과 같으며, 빈 내용은 거부합니다.
 - **`install_python_packages(packages: str, namespace: str)`** — 사내 PyPI 미러 서버로부터 패키지를 설치합니다. `packages` 인자에는 공백이나 쉼표로 구분된 패키지명을 전달하며, 버전 명시도 가능합니다(예: `"polars, rapidfuzz>=3.0"`). 임의의 URL, 파일 경로, editable 옵션, 기타 pip 플래그는 보안을 위해 거부되며, 인덱스 주소를 비롯한 pip 설정은 서버 환경 설정값으로 안전하게 고정됩니다. 패키지는 **번들된 포터블 Python이 아닌 별도의 격리 가상환경**(`SANDBOX_VENV`)에 설치되므로, 커널 재시작 없이도 모든 활성 네임스페이스에서 즉시 import하여 활용할 수 있습니다(기존에 로드된 메모리 데이터도 유지됩니다). 응답은 `install_status: INSTALLED` / `FAILED` / `RUNNING` 상태값으로 시작하며, `INSTALLED`는 pip의 반환 코드뿐만 아니라 **커널이 직접 해당 패키지의 실제 import 및 버전을 확인**했음을 의미합니다. 설치 작업은 백그라운드 스레드에서 진행되며 도구는 항상 `SANDBOX_TOOL_BUDGET` 제한 시간 내에 응답하므로, 미러 응답이 지연되더라도 클라이언트 측 타임아웃으로 인한 연결 종료가 발생하지 않습니다. 시간 내에 작업이 완료되지 않은 경우에는 실패가 아닌 `RUNNING` 상태를 반환하며, 동일한 인자로 다시 도구를 호출하여 최종 결과를 확인하도록 안내합니다. 설치 실패 시에는 실패 원인을 명확한 문장으로 설명해 드립니다. 특히 가장 빈번한 원인인 "사내 미러 미설정"의 경우, 인덱스 접속 상태를 확인한 후 수정해야 할 환경 변수명을 친절히 짚어 줍니다.
 - **`list_workspace_files()`** — `./workspace` 디렉터리에 존재하는 업로드 파일 및 산출물 파일 목록을 파일 크기, 확장자 형식 정보와 함께 반환합니다(모든 네임스페이스가 공용으로 참조합니다).
 - **`reset_kernel_state(namespace: str)`** — 지정한 네임스페이스의 커널만 단독으로 재시작하여 해당 대화의 메모리 상태를 초기화합니다(workspace 내 파일 및 타 네임스페이스 커널 상태는 유지됩니다).
@@ -132,7 +133,7 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 | `SANDBOX_EXEC_TIMEOUT` | `45` | 단일 호출당 코드 실행 제한 시간(초)입니다. 반드시 `SANDBOX_TOOL_BUDGET` 이하로 설정해야 합니다. (이전 기본값인 60초는 클라이언트 측 타임아웃과 경합하여 원인 파악이 어려운 클라이언트 취소 오류를 유발할 수 있었습니다.) |
 | `SANDBOX_STARTUP_TIMEOUT` | `60` | 커널 최초 구동(부팅) 제한 시간(초)입니다. |
 | `SANDBOX_MAX_STREAM_CHARS` | `20000` | 반환할 stdout 및 stderr 문자열의 최대 길이입니다(0으로 설정 시 무제한). |
-| `SANDBOX_MAX_WRITE_BYTES` | `1048576` | `write_workspace_file` 도구의 1회 파일 쓰기 최대 크기(바이트)입니다(0으로 설정 시 무제한). |
+| `SANDBOX_MAX_WRITE_BYTES` | `1048576` | `write_workspace_file`·`append_workspace_file` 도구의 1회 쓰기 최대 크기(바이트)입니다(0으로 설정 시 무제한). |
 | `SANDBOX_NS_IDLE_TIMEOUT` | `1800` | 사용되지 않는 유휴 네임스페이스 커널을 자동 회수하기까지의 대기 시간(초)입니다. |
 | `SANDBOX_MAX_NAMESPACES` | `8` | 동시에 유지할 수 있는 네임스페이스 커널의 최대 개수입니다(초과 시 LRU 알고리즘으로 회수). |
 | `SANDBOX_LAZY_START` | 미설정 | 설정할 경우(truthy), 서버 시작 시점에 예열용 커널을 미리 구동하지 않고 첫 요청 시 구동합니다. |
@@ -176,7 +177,8 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 
 | 버전 | 변경 내용 |
 |------|-----------|
-| **v0.7.0** | MCP 클라이언트 타임아웃 대응: 패키지 설치 작업을 백그라운드 스레드로 분리하고, 도구가 `SANDBOX_TOOL_BUDGET`(45초) 내에 `RUNNING` 상태로 즉시 응답하도록 개선했습니다. 격리 가상환경(venv)을 서버 시작 시 사전 생성하도록 최적화하였으며, `SANDBOX_EXEC_TIMEOUT` 기본값을 기존 60초에서 45초로 단축했습니다. |
+| **v0.8.0** | `append_workspace_file` 도구 추가: 응답 한 번의 출력 한도보다 긴 파일을 쌓을 수 있도록, 첫 부분은 `write_workspace_file`로 쓰고 나머지는 조각 단위로 파일 끝에 덧붙이는 도구를 추가했습니다. 내용은 받은 그대로 붙이며(조각 사이에 아무것도 넣지 않음) 파일이 없으면 새로 만듭니다. 응답에 파일 끝 8줄을 줄 번호와 함께 돌려주어 다음 조각을 이어 쓸 위치를 확인할 수 있습니다. 경로 제한과 크기 상한은 저장 도구와 같고 빈 내용은 거부합니다. 저장 도구에 인자를 더하지 않고 별도 도구로 둔 이유는 ADR-022에 정리했습니다. |
+| v0.7.0 | MCP 클라이언트 타임아웃 대응: 패키지 설치 작업을 백그라운드 스레드로 분리하고, 도구가 `SANDBOX_TOOL_BUDGET`(45초) 내에 `RUNNING` 상태로 즉시 응답하도록 개선했습니다. 격리 가상환경(venv)을 서버 시작 시 사전 생성하도록 최적화하였으며, `SANDBOX_EXEC_TIMEOUT` 기본값을 기존 60초에서 45초로 단축했습니다. |
 | v0.6.0 | `install_python_packages` 도구 추가: 사내 PyPI 미러를 통해 별도 격리 가상환경(venv)에 패키지를 설치하는 기능을 도입했습니다. 커널이 직접 import를 수행하여 정상 설치 여부를 교차 검증하며, 미러 미설정·네트워크 단절·평문 HTTP 무시 등 실패 원인을 정밀하게 구분하여 안내합니다. |
 | v0.5.0 | 코드 실행 판정 체계 전면 개편: 모델의 착각을 유발하는 모호한 'SUCCESS' 판정을 제거했습니다. 명시적 예외 없이 실패하는 케이스(백그라운드 스레드 크래시, 서브프로세스 비정상 종료, 삼켜진 트레이스백 등)의 탐지 로직을 추가하고, `sys.exit(0)` 오판 수정 및 `run_python_file` 실행 후 커널 상태 보존 처리를 적용했습니다. |
 | v0.4.1 | 워크스페이스 경로 해석 개선: 커널의 작업 디렉터리를 `SANDBOX_WORKSPACE` 내부로 일원화하여, 실행 코드가 `./workspace/` 접두사 없이 단순 상대 경로로 파일에 접근할 수 있도록 수정했습니다. 상대 경로 지정 시 호스트 작업 디렉터리가 아닌 프로젝트 루트를 기준으로 해석하도록 보완하였으며, 프로젝트 외부 워크스페이스 환경에서도 `run_python_file` 파일 해석 및 결과 링크가 정상 작동하도록 개선했습니다. |

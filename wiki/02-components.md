@@ -19,7 +19,7 @@ All configuration in one place. Reads env vars, falls back to sane defaults.
 | `EXEC_TIMEOUT` | `SANDBOX_EXEC_TIMEOUT` | `45` | Per-call timeout (s). Kept under `TOOL_BUDGET`; was 60, which raced the client's 60s timeout. |
 | `STARTUP_TIMEOUT` | `SANDBOX_STARTUP_TIMEOUT` | `60` | Kernel boot timeout (s). |
 | `MAX_STREAM_CHARS` | `SANDBOX_MAX_STREAM_CHARS` | `20000` | Cap on returned stdout/stderr (0 = unlimited). |
-| `MAX_WRITE_BYTES` | `SANDBOX_MAX_WRITE_BYTES` | `1048576` | Cap on one `write_workspace_file` call (0 = unlimited). |
+| `MAX_WRITE_BYTES` | `SANDBOX_MAX_WRITE_BYTES` | `1048576` | Cap on one `write_workspace_file` / `append_workspace_file` call (0 = unlimited). |
 | `VENV_DIR` | `SANDBOX_VENV` | `PROJECT_ROOT/.sandbox-venv` | Where `install_python_packages` puts packages. **Never inside the workspace** — the artifact interceptor diffs that tree and would report every installed file. |
 | `PIP_INDEX_URL` | `SANDBOX_PIP_INDEX_URL` | *(unset)* | The intranet PyPI mirror. Unset means pip falls back to pip.ini / the public PyPI, i.e. installs fail on a closed network. |
 | `PIP_TRUSTED_HOST` | `SANDBOX_PIP_TRUSTED_HOST` | *(unset)* | Needed for a plain-http mirror; without it pip **silently ignores** the index. |
@@ -120,13 +120,14 @@ filesystem-watcher thread.
   for a file that does **not exist yet**, so containment is checked on the parent
   after `resolve()`. Rejects absolute paths, `..`, Windows reserved device names,
   and anything landing outside the workspace; strips a leading `./workspace/`.
-  Used by `write_workspace_file`.
+  Used by `write_workspace_file` and `append_workspace_file`.
 - `_display_paths(target) -> (link_path, workspace_relative_path)` — formats a
   target for the response; via `chat_link_path` it keeps the `workspace/<name>`
   shape even when `SANDBOX_WORKSPACE` points outside `PROJECT_ROOT` (same rule as
   `artifacts.diff`).
 - Tools: `execute_python_code`, `run_python_file`, `write_workspace_file`,
-  `list_workspace_files`, `reset_kernel_state` (see `03`).
+  `append_workspace_file`, `list_workspace_files`, `install_python_packages`,
+  `reset_kernel_state` (see `03`).
 - `main()` — `ensure_workspace()`, warm-start `KERNEL.start()` unless
   `SANDBOX_LAZY_START` is truthy (failures are logged, not fatal), then
   `mcp.run()` (stdio transport).
@@ -152,3 +153,8 @@ reserved names, overwrite policy, LF preservation, size cap, the non-`.py`
 `run_python_file` refusal). It needs `server` — and therefore `mcp` — so the
 import is guarded: a missing SDK prints `[SKIP]` rather than failing, preserving
 the minimal-interpreter property above. It cleans up every file it creates.
+
+`check_append_workspace_file()` (v0.8.0) adds 19 more under the same guard:
+chunks land at the end in order, a missing file is created, the tail (last 8
+lines, long lines cut) and the mid-line note are reported, LF is preserved, and
+empty content, escapes, directories and the size cap are refused.

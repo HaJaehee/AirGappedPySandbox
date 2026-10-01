@@ -1,7 +1,7 @@
 # 03 — MCP Tools Reference
 
-Five tools are registered (verified order):
-`['execute_python_code', 'run_python_file', 'write_workspace_file', 'list_workspace_files', 'reset_kernel_state']`.
+Seven tools are registered (verified order, v0.8.0):
+`['execute_python_code', 'run_python_file', 'write_workspace_file', 'append_workspace_file', 'list_workspace_files', 'install_python_packages', 'reset_kernel_state']`.
 
 All tools return a **single text block** (not a typed object). "Return value"
 means printed stdout + captured extras, never a Python object. A machine-readable
@@ -136,10 +136,48 @@ flat string params replace that entirely.
   rewrite every `\n` as `\r\n` — the file stays byte-identical to what the model
   sent.
 - **Size cap:** `config.MAX_WRITE_BYTES` (`SANDBOX_MAX_WRITE_BYTES`, 1 MB). The
-  content is text the model itself emitted, so its own context window keeps it
-  far below the cap; this only bounds a runaway loop. For the same reason there
-  is deliberately **no append mode** — chunked writes have no real use case here
-  and would add a third required-ish param.
+  content is text the model itself emitted, so its reply's output limit keeps it
+  far below the cap; this only bounds a runaway loop.
+- **No append mode** — still true: there is no `append` parameter. A file longer
+  than one reply is built with the separate `append_workspace_file` (v0.8.0), and
+  the description points there. The earlier reasoning ("the context window keeps
+  the content small, chunked writes have no use case") missed that a tool call's
+  arguments share the reply's **output** limit — see the next section.
+
+## `append_workspace_file(filename: str, content: str) -> str`
+
+Add `content` verbatim to the **end** of a file in `./workspace` (v0.8.0). Like
+`write_workspace_file`, it does not execute anything and takes no `namespace`.
+
+Why it exists: a tool call's arguments are part of the model's reply, so they
+share the reply's output-token limit (`max_tokens`). A file longer than one
+reply — a 1,000-line TSX deck, a long report — cannot be sent in one call, and
+the call whose arguments are cut off fails. Rewriting the whole file with
+`overwrite=true` each time grows every call until it hits the same limit again.
+A neighbouring file server's `edit_file` is find-and-replace: used as "append",
+it inserts at the **first** match of a repeated line (`);`, `</div>`), and with
+an empty search string at the **start** of the file. In MADO that broke TSX files.
+
+- **A separate tool, not a mode** on `write_workspace_file`: an `append` flag
+  next to `overwrite` overlaps in meaning (what do both `true` mean?), which is
+  the misuse risk the write tool was designed to avoid.
+- **Same rules as the write tool:** `_resolve_new_workspace_path`, per-call
+  `MAX_WRITE_BYTES` (the refusal says to split into smaller chunks), UTF-8 with
+  `newline="\n"`, directory targets refused.
+- **Created if missing.** Restarting a file is still `write_workspace_file(overwrite=true)`;
+  the server cannot tell a fresh start from a continuation.
+- **Verbatim, nothing inserted between chunks.** If the file did not end with a
+  newline the response says so (`note: … continued its last line`) instead of
+  guessing — inserting one would break an intentional mid-line continuation.
+- **Empty `content` is refused** — answering SUCCESS for a no-op would make the
+  model believe it wrote something.
+- **Response shape:** `write_status:` (`SUCCESS` | `ERROR`), `--- file ---`
+  (`created`/`appended` N B; now total B and line count), `--- tail (last N lines) ---`
+  (the file's last 8 lines, numbered, each cut at 200 characters), `--- artifacts ---`
+  (the changed file, via `snapshot`/`diff`). The tail is how the model sees where
+  the next chunk goes; returning the whole file would move the output-limit
+  problem into the response. A `.py` target ends with a "when complete, run it
+  with `run_python_file`" hint.
 
 ## `list_workspace_files() -> str`
 
@@ -155,14 +193,15 @@ state. Workspace files are **kept**; other namespaces are untouched. Pass the
 ## Embedded usage rules (the `_RULES` string)
 
 Injected into `execute_python_code` and `run_python_file` descriptions so the LLM
-self-regulates. **Not** injected into `write_workspace_file` or
-`list_workspace_files`: `_RULES` is mostly about the kernel and opens by
+self-regulates. **Not** injected into `write_workspace_file`,
+`append_workspace_file` or `list_workspace_files`: `_RULES` is mostly about the kernel and opens by
 demanding a `namespace` those tools do not take, and bolting ~500 tokens of
 kernel rules onto a deliberately low-load tool would undo its purpose.
 
 `execute_python_code`'s description carries a one-line boundary pointing at
-`write_workspace_file` for save-only requests. Keep that pointer if you touch
-either description — overlapping tools are how small models end up picking the
+`write_workspace_file` for save-only requests, and `write_workspace_file`'s
+points at `append_workspace_file` for files too long for one call. Keep those
+pointers if you touch any of these descriptions — overlapping tools are how small models end up picking the
 wrong one.
 
 1. **Air-gap:** no `pip`/`apt`/`conda`, no network. Full pre-installed library

@@ -72,7 +72,30 @@
       <error condition="file exists and overwrite=false">write_status: ERROR, "already exists"; message states the fix (overwrite=true or a new filename)</error>
       <error condition="content over cap">write_status: ERROR, "over the N-byte limit"</error>
     </isolation>
-    <limit envVar="SANDBOX_MAX_WRITE_BYTES" defaultBytes="1048576" note="0 disables; no append mode by design"/>
+    <limit envVar="SANDBOX_MAX_WRITE_BYTES" defaultBytes="1048576" note="0 disables; no append mode -- appending is the separate append_workspace_file"/>
+  </tool>
+
+  <tool name="append_workspace_file" stateful="false" executes="false" addedIn="0.8.0">
+    <description>Add text verbatim to the END of a file inside ./workspace. For a file longer than one reply: a tool call's arguments share the reply's output-token limit, so the file is written first with write_workspace_file and the rest is added here in order, one chunk per call. A separate tool rather than an append flag on write_workspace_file, whose overwrite flag it would overlap. Takes NO namespace.</description>
+    <input>
+      <param name="filename" type="string" required="true">Path relative to ./workspace, same rules as write_workspace_file. Created if it does not exist.</param>
+      <param name="content" type="string" required="true">Exact text to add. UTF-8, newline="\n". Nothing is inserted between chunks.</param>
+    </input>
+    <output type="text">
+      <field name="write_status" values="SUCCESS|ERROR"/>
+      <section name="file" desc="./workspace/... path, created|appended N B, new total bytes and line count; a note when the file did not end with a newline"/>
+      <section name="tail" desc="the file's last 8 lines, numbered, each cut at 200 characters -- where the next chunk goes"/>
+      <section name="artifacts" desc="the changed file (snapshot/diff)"/>
+      <section name="next" desc="for a .py target, a run_python_file(...) hint for when the file is complete"/>
+    </output>
+    <isolation>
+      <rule>Resolved via _resolve_new_workspace_path(), as for write_workspace_file.</rule>
+      <error condition="empty content">write_status: ERROR, "content is empty -- nothing to append"</error>
+      <error condition="directory target">write_status: ERROR, "is a directory, not a file"</error>
+      <error condition="content over cap">write_status: ERROR, "over the N-byte limit ... Split it into smaller chunks."</error>
+      <error condition="escape, absolute path, '..', reserved device name">same refusals as write_workspace_file</error>
+    </isolation>
+    <limit envVar="SANDBOX_MAX_WRITE_BYTES" defaultBytes="1048576" note="per call, shared with write_workspace_file; 0 disables"/>
   </tool>
 
   <tool name="list_workspace_files" stateful="false">
@@ -125,7 +148,7 @@
   </tool>
 
   <embeddedRules appliesTo="execute_python_code,run_python_file"
-                 notAppliedTo="write_workspace_file,list_workspace_files"
+                 notAppliedTo="write_workspace_file,append_workspace_file,list_workspace_files"
                  notAppliedReason="_RULES opens by demanding a namespace these tools do not take; adding ~500 tokens of kernel rules would undo the low-load design">
     <rule id="1" name="air-gap">No pip/apt/conda, no network. All libraries pre-installed.</rule>
     <rule id="2" name="print">Only print()ed output is returned.</rule>
@@ -137,6 +160,7 @@
   <toolBoundaries note="overlapping tools are how small models pick the wrong one; keep these pointers in sync with the descriptions">
     <boundary from="execute_python_code" to="write_workspace_file">"To simply SAVE text or code to a file without running it, use write_workspace_file instead -- it is simpler and needs no namespace."</boundary>
     <boundary from="write_workspace_file" to="run_python_file">Appended to the response for a .py target: "Next: run it with run_python_file(...)".</boundary>
+    <boundary from="write_workspace_file" to="append_workspace_file">"If the file is too long to send in one call, write the first part here and add the rest with append_workspace_file."</boundary>
   </toolBoundaries>
 
 </mcpServer>

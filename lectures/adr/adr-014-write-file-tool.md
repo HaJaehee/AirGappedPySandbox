@@ -4,6 +4,8 @@
 
 채택됨 (Accepted) · 2026-08-04, v0.4.0
 
+v0.8.0에서 [ADR-022](adr-022-append-tool.md)가 보완했습니다. 저장 도구에 이어 쓰기 모드를 두지 않는 결정은 유지하되, 응답 한 번의 출력 한도보다 긴 파일을 위해 별도 도구 `append_workspace_file`을 신설했습니다. 아래 결정의 "컨텍스트 윈도우가 파일 크기를 먼저 제한한다"는 근거는 출력 한도를 놓친 것이었습니다.
+
 관련 결정: [ADR-005](adr-005-snapshot-diff-artifacts.md), [ADR-007](adr-007-rules-in-tool-descriptions.md), [ADR-010](adr-010-run-script-file.md), [ADR-013](adr-013-shared-workspace.md)
 
 ## 맥락 (Context)

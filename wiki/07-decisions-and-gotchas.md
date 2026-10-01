@@ -112,6 +112,23 @@ Related: `add_site_dir` now gives up after 5s on a busy kernel. Refreshing
 running a long cell could spend the entire budget of an install belonging to
 somebody else.
 
+### A file longer than one reply: `append_workspace_file` (v0.8.0)
+
+`write_workspace_file` shipped without an append mode on the theory that the
+model's context window keeps file content small. The real ceiling is the
+**output** limit of one reply (`max_tokens`): a tool call's arguments are part of
+that reply. A 1,000-line TSX file cannot be sent in one call, the cut-off call
+fails, and rewriting the whole file with `overwrite=true` grows every call until
+it hits the same limit. MADO had been telling models to "append" with the
+filesystem server's `edit_file` instead — find-and-replace, which inserts at the
+first match of a repeated line, or at the top of the file for an empty search.
+
+So appending is a **separate tool**, not a flag on the write tool (an `append`
+next to `overwrite` is exactly the overlapping-parameter trap the write tool
+avoided). It writes verbatim, creates a missing file, refuses empty content, and
+answers with the file's last 8 lines so the model can see where the next chunk
+goes. See `03` and lecture ADR-022.
+
 ## Windows / offline gotchas
 
 - **Blocking `time.sleep` is NOT interruptible on Windows.** The interrupt event

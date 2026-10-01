@@ -112,6 +112,72 @@ def check_write_workspace_file():
         pass
 
 
+def check_append_workspace_file():
+    """append_workspace_file: chunks land in order, at the end, and stay inside the workspace."""
+    try:
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] append_workspace_file checks (server import failed: {exc})")
+        return
+
+    ws = config.ensure_workspace()
+    target = ws / "_smoke_append" / "deck.tsx"
+
+    # creates a missing file, then each chunk goes to the end, in order
+    out = server.append_workspace_file("_smoke_append/deck.tsx", "import x from 'y';\n")
+    check("append: creates a missing file", out.startswith("write_status: SUCCESS") and "(created" in out)
+    out = server.append_workspace_file("_smoke_append/deck.tsx", "const A = 1;\n")
+    out = server.append_workspace_file("./workspace/_smoke_append/deck.tsx", "export default [A];\n")
+    check("append: chunks land at the end, in order",
+          target.read_text(encoding="utf-8") == "import x from 'y';\nconst A = 1;\nexport default [A];\n")
+    check("append: reports appended and the new size", "(appended" in out and "3 lines" in out)
+    check("append: shows the tail with line numbers", "--- tail (last 3 lines) ---" in out
+          and "     3| export default [A];" in out)
+    check("append: artifact link", "[deck.tsx](./workspace/" in out)
+    check("append: LF not translated to CRLF", b"\r\n" not in target.read_bytes())
+
+    # a chunk that continues the last line is reported, not silently fixed
+    server.write_workspace_file("_smoke_append/deck.tsx", "no newline", overwrite=True)
+    out = server.append_workspace_file("_smoke_append/deck.tsx", " -- continued\n")
+    check("append: joining mid-line is reported", "did not end with a newline" in out)
+    check("append: content is verbatim",
+          target.read_text(encoding="utf-8") == "no newline -- continued\n")
+
+    # refusals: empty content, escapes, directories, size cap
+    check("append: refuses empty content",
+          server.append_workspace_file("_smoke_append/deck.tsx", "").startswith("write_status: ERROR"))
+    for bad in ("../escape.tsx", "C:/Windows/Temp/escape.tsx", "NUL"):
+        out = server.append_workspace_file(bad, "nope\n")
+        check(f"append: refuses {bad!r}", out.startswith("write_status: ERROR"))
+    check("append: nothing escaped the workspace", not (config.PROJECT_ROOT / "escape.tsx").exists())
+    check("append: refuses a directory",
+          "is a directory" in server.append_workspace_file("_smoke_append", "x\n"))
+    original = config.MAX_WRITE_BYTES
+    config.MAX_WRITE_BYTES = 10
+    out = server.append_workspace_file("_smoke_append/deck.tsx", "x" * 50)
+    config.MAX_WRITE_BYTES = original
+    check("append: enforces size cap", "over the" in out and "smaller chunks" in out)
+
+    # the tail stays short however long the file or its lines get
+    server.write_workspace_file("_smoke_append/deck.tsx", "".join(f"L{i}\n" for i in range(1, 41)),
+                                overwrite=True)
+    out = server.append_workspace_file("_smoke_append/deck.tsx", "y" * 500 + "\n")
+    check("append: tail is the last 8 lines", "--- tail (last 8 lines) ---" in out
+          and "    34| L34" in out and "    33| L33" not in out)
+    check("append: long tail lines are cut", "y" * 200 + " ..." in out and "y" * 201 not in out)
+
+    # write_workspace_file points at the append tool for long files
+    import inspect
+    check("write: description points at append_workspace_file",
+          "append_workspace_file" in inspect.getsource(server).split("def write_workspace_file")[0])
+
+    try:
+        target.unlink()
+        target.parent.rmdir()
+    except OSError:
+        pass
+
+
 def check_external_workspace():
     """Path handling when SANDBOX_WORKSPACE points outside the project.
 
@@ -592,8 +658,9 @@ def main():
 
     KERNEL.shutdown()
 
-    # 11. write_workspace_file: pure-function checks, no kernel needed.
+    # 11. write_workspace_file / append_workspace_file: pure-function checks, no kernel needed.
     check_write_workspace_file()
+    check_append_workspace_file()
 
     # 12. path handling when the workspace lives outside the project.
     check_external_workspace()

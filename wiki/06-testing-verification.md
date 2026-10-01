@@ -6,7 +6,7 @@ Verify on the **real WinPython** (`dist/AirGappedPySandbox/WPy64-313130/python/
 python.exe`), not only the dev venv. The dev venv proves logic; WinPython proves
 the actual shipped runtime.
 
-## 1. Core smoke tests — `test_core.py` (86 checks)
+## 1. Core smoke tests — `test_core.py` (105 checks)
 
 Kernel + artifact layer, no MCP needed.
 

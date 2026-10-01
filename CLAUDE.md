@@ -89,7 +89,7 @@ Output Schema:
 write_status (string): "SUCCESS" or "ERROR".
 file (string): Path, byte size, line count.
 artifacts (array of strings): Markdown link to the written file.
-NOTE — as-built tool set: the shipped server exposes six tools. Beyond the three above it adds run_python_file (run an existing ./workspace .py file as a script), install_python_packages (install from the intranet PyPI mirror into a side venv, verified by the kernel itself) and reset_kernel_state (restart one namespace's kernel). The execution tools also take a mandatory `namespace` argument for per-conversation isolation; see wiki/03-mcp-tools.md and wiki/09-namespace-routing.md for the authoritative interfaces.
+NOTE — as-built tool set: the shipped server exposes seven tools. Beyond the three above it adds run_python_file (run an existing ./workspace .py file as a script), append_workspace_file (add a chunk to the end of a workspace file, for files longer than one reply; v0.8.0), install_python_packages (install from the intranet PyPI mirror into a side venv, verified by the kernel itself) and reset_kernel_state (restart one namespace's kernel). The execution tools also take a mandatory `namespace` argument for per-conversation isolation; see wiki/03-mcp-tools.md and wiki/09-namespace-routing.md for the authoritative interfaces.
 5. Prompt Engineering & System Rule Injection (Tool Description)
 To guarantee that the LLM utilizes the sandbox effectively without raising errors, the MCP tool description and system instructions injected into the LLM must strictly enforce the following rules:
 
