@@ -20,7 +20,10 @@ xmltodict
 # Documents & Reporting
 pdfplumber
 pypdf
-PyMuPDF
+# Note: PyMuPDF is excluded by default due to GNU AGPL-3.0 license (strong copyleft).
+# PDF processing is fully covered by pypdf (BSD-3-Clause) and pdfplumber (MIT).
+# Uncomment only if you explicitly need PyMuPDF and comply with AGPL-3.0:
+# PyMuPDF
 python-docx
 markdown
 beautifulsoup4

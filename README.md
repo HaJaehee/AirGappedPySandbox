@@ -67,7 +67,7 @@ IPython 커널  ← 4GB 포터블 Python으로 실행됨
 ### 1. 포터블 Python 준비 (커널 인터프리터)
 
 커널용 4GB 포터블 Python 배포판에는 데이터 사이언스 분석 패키지 일체 **및** `ipykernel`이 포함되어 있어야 합니다. 다음 주요 패키지가 사전에 구비되어 있어야 합니다:
-`pandas`, `numpy`, `scipy`, `sympy`, `matplotlib`, `seaborn`, `pdfplumber`, `pypdf`, `PyMuPDF`, `openpyxl`, `xlsxwriter`, `xlrd`, `lxml`, `xmltodict`, `python-docx`, `markdown`, `beautifulsoup4`.
+`pandas`, `numpy`, `scipy`, `sympy`, `matplotlib`, `seaborn`, `pdfplumber`, `pypdf`, `openpyxl`, `xlsxwriter`, `xlrd`, `lxml`, `xmltodict`, `python-docx`, `markdown`, `beautifulsoup4`.
 또한 커널 프로세스 구동의 핵심이 되는 `ipykernel` 역시 반드시 설치되어 있어야 합니다.
 
 ### 2. 서버 구동용 의존성 설치 (오프라인 환경)
@@ -186,3 +186,9 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 | v0.3.0 | 대화 세션별 **네임스페이스 라우팅**(필수 `namespace` 인자) 도입: 단일 서버 프로세스를 다수의 AnythingLLM 대화 세션이 공유할 때 발생하는 변수 오염 및 충돌을 방지했습니다. 네임스페이스별 독립 커널 풀(사전 예열 웜 리저브, 유휴 자원 자동 회수, LRU 기반 상한 관리), 응답 배너 에코, 향후 `_meta` 대화 ID 연동 훅을 마련했습니다. |
 | v0.2.0 | `run_python_file` 도구 추가: 워크스페이스 내의 독립된 `.py` 스크립트 파일을 직접 구동할 수 있는 기능을 추가했습니다. |
 | v0.1.0 | 초기 기능 릴리스: 상태 유지형 IPython 커널 코어, 산출물 자동 감지 인터셉터, FastMCP 기반 도구 연동, 포터블 배포판(WinPython 3.13) 구성 및 오프라인 환경 검증 체계를 구축했습니다. |
+
+---
+
+## 라이선스 (License)
+
+본 프로젝트는 [MIT License](LICENSE)에 따라 배포됩니다. 자세한 내용은 [`LICENSE`](LICENSE) 파일을 참고하십시오.

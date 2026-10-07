@@ -49,7 +49,7 @@ IMPORTANT RULES for this sandbox:
    execute, and do NOT make network calls. If you need a library that is not
    listed below, call the install_python_packages tool -- that is the only
    supported way to add one. Pre-installed libraries include: pandas, numpy, scipy, sympy,
-   matplotlib, seaborn, pdfplumber, pypdf, PyMuPDF (fitz), openpyxl, xlsxwriter,
+   matplotlib, seaborn, pdfplumber, pypdf, openpyxl, xlsxwriter,
    xlrd, lxml, xmltodict, python-docx, markdown, beautifulsoup4, python-pptx (pptx),
    reportlab, jinja2, plotly, duckdb, polars, pyarrow, Pillow (PIL), rapidfuzz.
 2. PRINT RESULTS: Only what you print() is returned. Wrap every final value,
