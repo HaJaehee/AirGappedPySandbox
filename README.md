@@ -51,7 +51,7 @@ IPython 커널  ← 4GB 포터블 Python으로 실행됨
 - **`execute_python_code(code: str, namespace: str)`** — 지정된 네임스페이스의 영속 커널에서 Python 코드를 실행합니다. 실행 결과 판정값인 `execution_status`(`RAN_UNVERIFIED` / `RAN_NO_OUTPUT` / `RAN_WITH_ERRORS` / `FAILED` / `TIMEOUT`), 캡처된 표준 출력(stdout), 정리된 트레이스백이 포함된 표준 에러(stderr), 그리고 새로 생성된 workspace 파일의 Markdown 링크를 반환합니다. 응답의 **첫 줄에는 실행 판정 결과가, 마지막 줄에는 `next_action:` 후속 조치 지침**이 출력되며, 그사이에 `active_namespace: ns-XXXX`가 명시됩니다. 본 시스템에는 `SUCCESS`라는 판정값이 존재하지 않습니다. 샌드박스는 실패를 증명할 수는 있어도 의도한 과업의 논리적 성공까지 증명할 수는 없으며, 성능이 제한적인 소형 모델이 `SUCCESS` 단어를 보고 실제 결과 검증 없이 과업이 완료된 것으로 오인하는 현상을 방지하기 위함입니다.
 - **`run_python_file(file_path: str, namespace: str)`** — `./workspace` 디렉터리 내의 `.py` 파일을 해당 네임스페이스 커널에서 스크립트 형태로 실행합니다(`if __name__ == '__main__'` 블록 포함 실행). 반환 형식은 `execute_python_code`와 동일하며, 스크립트의 최상위 변수 및 함수는 `sys.exit()`로 종료되거나 실행 중 예외가 발생하더라도 커널 메모리에 그대로 보존됩니다. `sys.exit(0)`은 정상 종료로 인정되며, 0이 아닌 종료 코드는 `FAILED`로 판정합니다. 경로는 격리 환경 보호를 위해 반드시 `./workspace` 내부여야 하며, 외부 경로 접근은 즉시 거부됩니다.
 - **`write_workspace_file(filename: str, content: str, overwrite: bool = False)`** — 텍스트(소스 코드, 메모, CSV, Markdown, JSON 등)를 `./workspace` 내의 파일로 **직접 저장**합니다. 코드를 실행하지 않으므로 `namespace` 인자가 필요하지 않습니다. 파일을 생성하기 위해 "파일을 작성하는 Python 코드"를 모델이 다시 생성할 필요가 없으므로, 소형 모델에서 자주 나타나는 자기참조(self-referential) 코드 생성 오류를 근본적으로 방지합니다. 저장 경로는 `./workspace` 내부로 엄격히 제한되며(`..`, 절대 경로, Windows 예약 장치명 차단), 기존 파일이 이미 존재할 경우 `overwrite=True` 옵션을 명시하지 않으면 덮어쓰지 않습니다.
-- **`append_workspace_file(filename: str, content: str)`** — `./workspace` 내 파일의 **끝에** 텍스트를 그대로 덧붙입니다(v0.8.0). 도구 호출의 인자도 응답 한 번의 출력 한도(`max_tokens`)를 함께 쓰므로, 한 번에 보낼 수 없는 긴 파일은 첫 부분을 `write_workspace_file`로 쓰고 나머지를 이 도구로 순서대로 덧붙입니다. 파일이 없으면 새로 만들고, 조각 사이에 아무것도 끼워 넣지 않습니다. 응답에는 파일 끝 8줄이 줄 번호와 함께 실려 다음 조각을 이어 쓸 위치를 확인할 수 있습니다. 경로 제한과 크기 상한은 `write_workspace_file`과 같으며, 빈 내용은 거부합니다.
+- **`append_workspace_file(filename: str, content: str)`** — `./workspace` 내 파일의 **끝에** 텍스트를 그대로 덧붙입니다(v0.8.0). 도구 호출의 인자도 응답 한 번의 출력 한도(`max_tokens`)를 함께 쓰므로, 한 번에 보낼 수 없는 긴 파일은 첫 부분을 `write_workspace_file`로 쓰고 나머지를 이 도구로 순서대로 덧붙입니다. 파일이 없으면 새로 만들고, 조각 사이에 아무것도 끼워 넣지 않습니다. 응답에는 파일 끝 8줄이 줄 번호와 함께 실려 다음 조각을 이어 쓸 위치를 확인할 수 있습니다. 경로 제한과 크기 상한은 `write_workspace_file`과 같으며, 빈 내용은 거부합니다. ([상세 매뉴얼](#대용량-파일-분할-작성-매뉴얼-append_workspace_file))
 - **`install_python_packages(packages: str, namespace: str)`** — 사내 PyPI 미러 서버로부터 패키지를 설치합니다. `packages` 인자에는 공백이나 쉼표로 구분된 패키지명을 전달하며, 버전 명시도 가능합니다(예: `"polars, rapidfuzz>=3.0"`). 임의의 URL, 파일 경로, editable 옵션, 기타 pip 플래그는 보안을 위해 거부되며, 인덱스 주소를 비롯한 pip 설정은 서버 환경 설정값으로 안전하게 고정됩니다. 패키지는 **번들된 포터블 Python이 아닌 별도의 격리 가상환경**(`SANDBOX_VENV`)에 설치되므로, 커널 재시작 없이도 모든 활성 네임스페이스에서 즉시 import하여 활용할 수 있습니다(기존에 로드된 메모리 데이터도 유지됩니다). 응답은 `install_status: INSTALLED` / `FAILED` / `RUNNING` 상태값으로 시작하며, `INSTALLED`는 pip의 반환 코드뿐만 아니라 **커널이 직접 해당 패키지의 실제 import 및 버전을 확인**했음을 의미합니다. 설치 작업은 백그라운드 스레드에서 진행되며 도구는 항상 `SANDBOX_TOOL_BUDGET` 제한 시간 내에 응답하므로, 미러 응답이 지연되더라도 클라이언트 측 타임아웃으로 인한 연결 종료가 발생하지 않습니다. 시간 내에 작업이 완료되지 않은 경우에는 실패가 아닌 `RUNNING` 상태를 반환하며, 동일한 인자로 다시 도구를 호출하여 최종 결과를 확인하도록 안내합니다. 설치 실패 시에는 실패 원인을 명확한 문장으로 설명해 드립니다. 특히 가장 빈번한 원인인 "사내 미러 미설정"의 경우, 인덱스 접속 상태를 확인한 후 수정해야 할 환경 변수명을 친절히 짚어 줍니다.
 - **`list_workspace_files()`** — `./workspace` 디렉터리에 존재하는 업로드 파일 및 산출물 파일 목록을 파일 크기, 확장자 형식 정보와 함께 반환합니다(모든 네임스페이스가 공용으로 참조합니다).
 - **`reset_kernel_state(namespace: str)`** — 지정한 네임스페이스의 커널만 단독으로 재시작하여 해당 대화의 메모리 상태를 초기화합니다(workspace 내 파일 및 타 네임스페이스 커널 상태는 유지됩니다).
@@ -148,6 +148,94 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 ## 샌드박스 파일 공유 및 사용 방법
 
 분석 대상인 PDF, Excel, CSV 등의 문서를 `workspace/` 디렉터리(AnythingLLM 설정에서 `SANDBOX_WORKSPACE`로 지정한 폴더)에 배치하십시오. 커널의 기본 작업 디렉터리가 해당 폴더로 자동 설정되므로, LLM은 `list_workspace_files` 도구로 파일 목록을 파악한 후 `./workspace/` 접두사 없이 `data.xlsx`와 같은 단순 상대 경로로 직접 접근할 수 있습니다. 코드 실행을 통해 새로 생성된 결과 파일 역시 동일한 폴더에 저장되며, 사용자에게는 Markdown 다운로드 링크 형태로 반환됩니다.
+
+## 대용량 파일 분할 작성 매뉴얼 (`append_workspace_file`)
+
+`append_workspace_file`은 한 번의 LLM 응답 출력 토큰 한도(`max_tokens`)를 초과하는 대규모 소스 코드(Python 스크립트, React/TSX 컴포넌트, HTML 보고서 등)나 장문 문서를 안전하게 조각(Chunk) 단위로 이어 붙여 완성할 수 있도록 설계된 전용 도구입니다 (v0.8.0, [ADR-022](lectures/adr/adr-022-append-tool.md)).
+
+### 1. 도입 배경 및 필요성
+- **출력 토큰(`max_tokens`) 제약 극복:** LLM이 도구를 호출할 때 전달하는 인자(`content`)는 모델의 1회 응답 출력 한도에 포함됩니다. 1,000줄 이상의 방대한 코드나 보고서를 한 번에 생성하려고 하면 인자가 도중에 잘려 구문 오류나 도구 호출 실패가 발생합니다.
+- **덮어쓰기(`write_workspace_file`) 반복의 한계:** `overwrite=True`를 이용해 기존 내용을 포함한 채 매번 전체 파일을 다시 덮어쓰는 방식을 취하면, 회차가 거듭될수록 전송해야 할 페이로드가 계속 누적되어 결국 동일한 출력 한도에 도달하게 됩니다.
+- **단일 책임 도구 분리:** `write_workspace_file`에 `append` 플래그를 추가하는 대신 별도의 `append_workspace_file` 도구로 분리함으로써, `overwrite`와 `append` 옵션이 충돌하거나 소형 모델이 모드를 오인하여 호출하는 위험을 원천 차단했습니다.
+
+### 2. 도구 시그니처 및 매개변수
+
+```python
+append_workspace_file(filename: str, content: str) -> str
+```
+
+- **`filename: str`**
+  - `./workspace` 기준의 파일 상대 경로입니다 (예: `long_analysis.py`, `reports/summary.md`).
+  - 접두사(`./workspace/`, `workspace/`)는 자동으로 정규화됩니다.
+  - 상위 디렉터리 탐색(`..`), 드라이브 절대 경로, Windows 예약 장치명(`CON`, `PRN`, `AUX`, `NUL`, `COM1~9`, `LPT1~9`) 등은 시스템 격리 및 안전을 위해 엄격히 차단됩니다.
+- **`content: str`**
+  - 파일 끝에 덧붙일 UTF-8 텍스트 원문(verbatim)입니다.
+  - 빈 문자열(`""`)은 유의미한 쓰기 작업이 아니므로 오류(`write_status: ERROR`)로 거부됩니다.
+- **`namespace` 불필요:**
+  - 본 도구는 영속 커널 메모리를 점유하거나 Python 코드를 실행하지 않는 순수 파일 입출력 도구이므로 `namespace` 인자가 필요하지 않습니다.
+
+### 3. 반환 메시지 및 꼬리(Tail) 피드백
+
+도구 호출이 성공하면 파일 전체를 반환하는 대신, 컨텍스트 절약을 위해 **파일 끝 8줄(Tail)**을 줄 번호와 함께 반환합니다:
+
+```text
+write_status: SUCCESS
+
+--- file ---
+./workspace/data_pipeline.py  (appended 1450 B; now 4820 B, 156 lines)
+
+--- tail (last 8 lines) ---
+149: def transform_features(df):
+150:     # Feature normalization and scaling
+151:     df['norm_val'] = (df['val'] - df['val'].mean()) / df['val'].std()
+152:     return df
+153: 
+154: if __name__ == '__main__':
+155:     main()
+156: 
+
+--- artifacts ---
+[data_pipeline.py](workspace/data_pipeline.py)  (4.7 KB)
+
+Next: run it with run_python_file(file_path="data_pipeline.py", namespace=<your namespace>).
+```
+
+- **꼬리 미리보기 (`--- tail ---`):** 파일 전체를 반환하면 클라이언트의 수신 컨텍스트를 불필요하게 낭비하므로, 마지막 8줄만 번호와 함께 제공하여 모델과 사용자가 직전 작성 위치(들여쓰기, 괄호 닫힘 상태 등)를 확인하고 다음 청크를 안전하게 이어 쓸 수 있도록 안내합니다.
+- **줄바꿈 누락 주의 안내:** 직전 청크 끝이 줄바꿈(`\n`) 없이 끝난 상태에서 새 청크가 바로 이어 붙은 경우, 아래와 같은 주의 메시지가 응답에 함께 출력됩니다:
+  > `note: the file did not end with a newline, so this chunk continued its last line. Start the next chunk with a newline if that was not intended.`
+
+### 4. 표준 분할 작성 워크플로우
+
+긴 파일을 안정적으로 작성할 때는 다음 4단계 패턴을 권장합니다:
+
+1. **1단계 (초기화 및 1차 청크 작성):**
+   - 새 파일을 작성할 때는 반드시 **`write_workspace_file`**에 `overwrite=True`를 명시하여 시작합니다.
+   - *주의:* 대상 파일이 없으면 `append_workspace_file`도 새 파일을 생성하지만, 이전에 실패한 잔여 파일이나 동일한 이름의 파일이 이미 존재할 경우 그 뒤에 내용이 그대로 이어 붙으므로, 새로 작성할 때는 반드시 `write_workspace_file`로 시작해야 합니다.
+   ```text
+   write_workspace_file(
+       filename="data_pipeline.py",
+       content="# Part 1: Imports & Setup\nimport pandas as pd\nimport numpy as np\n\n",
+       overwrite=True
+   )
+   ```
+2. **2단계 (후속 청크 순차 전송):**
+   - 이어질 내용을 적절한 크기(권장: 100~300줄 또는 2,000~4,000 토큰 단위)로 나누어 **`append_workspace_file`**을 순차적으로 호출합니다.
+   ```text
+   append_workspace_file(
+       filename="data_pipeline.py",
+       content="# Part 2: Data Extraction\ndef extract_records():\n    return pd.read_csv('raw.csv')\n\n"
+   )
+   ```
+3. **3단계 (꼬리 확인 및 자가 점검):**
+   - 매 호출 응답의 `--- tail ---` 블록을 확인하여 마지막 줄 번호, 함수/클래스 블록 연결 상태를 점검한 후 다음 청크를 전송합니다.
+4. **4단계 (완성 및 실행 검증):**
+   - 작성이 완료된 스크립트(`.py`)는 `run_python_file(file_path="data_pipeline.py", namespace=...)` 도구를 호출하여 세션 네임스페이스의 영속 커널에서 실행합니다.
+
+### 5. 핵심 주의사항 요약
+- **명시적 개행(`\n`) 포함:** 서버는 청크 사이에 줄바꿈을 임의로 끼워 넣지 않습니다(있는 그대로 연결). 따라서 줄 단위 구분이 필요한 경우 각 청크의 끝에 반드시 `\n`을 포함해야 합니다.
+- **재작업 시 초기화:** 작업 중단 등으로 인해 파일을 처음부터 다시 작성해야 할 때는 반드시 `write_workspace_file(overwrite=True)`로 시작하십시오.
+- **1회 전송 크기 상한:** 1회 전송 크기는 `SANDBOX_MAX_WRITE_BYTES`(기본값 1 MB)로 제한되며, 초과 시 오류와 함께 청크를 더 작게 나누라는 안내가 반환됩니다.
+- **중복 전송 주의:** 네트워크 재시도 등으로 동일한 조각을 2회 호출하면 파일 끝에 그대로 중복 추가됩니다. 응답의 누적 바이트 수와 행 번호(`now X B, Y lines`)를 반드시 확인하십시오.
 
 ## 타임아웃 및 장애 복구 동작
 
