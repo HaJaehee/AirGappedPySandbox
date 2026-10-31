@@ -13,7 +13,11 @@ version of this catalog is in [tool-specs.xml](tool-specs.xml).
 > `ctx: Context` is injected by FastMCP (not in the schema) for the future
 > `_meta` conversation-id hook.
 
-## `execute_python_code(code: str, namespace: str) -> str`
+## `execute_python_code(code: str, namespace: str) -> str | [str, Image…]`
+
+The result is the text block below. With `SANDBOX_INLINE_IMAGES` on, new png/jpg/gif/webp files are added after it as
+MCP `ImageContent` (`SANDBOX_INLINE_IMAGE_MAX_COUNT`, `SANDBOX_INLINE_IMAGE_MAX_BYTES`); `run_python_file` does the
+same. It is off by default because a host that flattens results to text would pour the base64 into the model.
 
 Run Python in the namespace's stateful kernel. Variables/imports persist across
 calls **within that namespace**. Response is wrapped with an `active_namespace:`

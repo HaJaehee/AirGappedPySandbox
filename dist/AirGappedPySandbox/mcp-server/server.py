@@ -22,8 +22,9 @@ import os
 import re
 import time
 from pathlib import Path
+from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP, Image
 
 import config
 import pip_installer
@@ -249,6 +250,27 @@ def _render(ns: str, source: str, code_result, artifacts) -> str:
     return "\n".join(lines)
 
 
+def _with_images(text: str, artifacts) -> Any:
+    """Add new raster images to the result when the host opted in (see config).
+
+    Unreadable or oversized images simply stay as the Markdown link in ``text``.
+    """
+    if not config.INLINE_IMAGES:
+        return text
+    images = []
+    for art in artifacts:
+        image_format = config.INLINE_IMAGE_FORMATS.get(art.path.suffix.lower())
+        if image_format is None or art.size > config.INLINE_IMAGE_MAX_BYTES:
+            continue
+        if len(images) >= config.INLINE_IMAGE_MAX_COUNT:
+            break
+        try:
+            images.append(Image(data=art.path.read_bytes(), format=image_format))
+        except OSError:
+            continue
+    return [text, *images] if images else text
+
+
 def _refusal(ns: str, source: str, message: str) -> str:
     """A refusal before any code ran -- shaped like a failed execution."""
     return "\n".join([
@@ -277,7 +299,7 @@ def _refusal(ns: str, source: str, message: str) -> str:
         "\n\n" + _RULES
     )
 )
-def execute_python_code(code: str, namespace: str, ctx: Context | None = None) -> str:
+def execute_python_code(code: str, namespace: str, ctx: Context | None = None) -> Any:
     """Run ``code`` in your namespace's persistent kernel.
 
     Args:
@@ -294,7 +316,7 @@ def execute_python_code(code: str, namespace: str, ctx: Context | None = None) -
     result = kernel.execute(code, timeout=config.EXEC_TIMEOUT)
     after = snapshot()
     artifacts = diff(before, after, config.PROJECT_ROOT)
-    return _render(ns, source, result, artifacts)
+    return _with_images(_render(ns, source, result, artifacts), artifacts)
 
 
 def _resolve_workspace_file(file_path: str) -> tuple[Path | None, str | None]:
@@ -468,7 +490,7 @@ finally:
         "(e.g. 'sample.py' or './workspace/sample.py').\n\n" + _RULES
     )
 )
-def run_python_file(file_path: str, namespace: str, ctx: Context | None = None) -> str:
+def run_python_file(file_path: str, namespace: str, ctx: Context | None = None) -> Any:
     """Execute a workspace .py file in your namespace's persistent kernel.
 
     Args:
@@ -495,7 +517,7 @@ def run_python_file(file_path: str, namespace: str, ctx: Context | None = None) 
     result = kernel.execute(code, timeout=config.EXEC_TIMEOUT)
     after = snapshot()
     artifacts = diff(before, after, config.PROJECT_ROOT)
-    return _render(ns, source, result, artifacts)
+    return _with_images(_render(ns, source, result, artifacts), artifacts)
 
 
 @mcp.tool(

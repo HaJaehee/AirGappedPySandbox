@@ -47,7 +47,7 @@ def _env_int(name: str, default: int) -> int:
 
 # Single source of truth for the project version. Keep in sync with the version
 # history table in README.md. The server reports this over MCP (serverInfo).
-VERSION: str = "0.8.0"
+VERSION: str = "0.9.0"
 
 # Project root = directory containing this file. The kernel's working directory
 # is set here so that the "./workspace/..." relative paths used by the LLM
@@ -136,6 +136,15 @@ MAX_NAMESPACES: int = _env_int("SANDBOX_MAX_NAMESPACES", 8)
 # Image extensions rendered as inline Markdown images; everything else becomes a
 # plain Markdown link.
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
+
+# Newly created raster images are also returned as MCP ImageContent when the host
+# opts in, so a vision model can look at its own chart. Off by default: a host
+# that flattens tool results to text would pour the base64 into the model context.
+INLINE_IMAGES: bool = os.environ.get("SANDBOX_INLINE_IMAGES", "").strip().lower() in {"1", "true", "yes"}
+INLINE_IMAGE_MAX_COUNT: int = _env_int("SANDBOX_INLINE_IMAGE_MAX_COUNT", 4)
+INLINE_IMAGE_MAX_BYTES: int = _env_int("SANDBOX_INLINE_IMAGE_MAX_BYTES", 5 * 1024 * 1024)
+# Image subtype per extension; vector/bmp stay links because models do not accept them.
+INLINE_IMAGE_FORMATS = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".gif": "gif", ".webp": "webp"}
 
 
 def ensure_workspace() -> Path:

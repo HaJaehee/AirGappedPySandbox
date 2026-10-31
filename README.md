@@ -1,6 +1,6 @@
 # 에어갭 Python 샌드박스 — MCP 서버
 
-**버전: v0.8.0** ([변경 이력](#버전-이력))
+**버전: v0.9.0** ([변경 이력](#버전-이력))
 
 본 프로젝트는 MCP(Model Context Protocol)를 통해 LLM에 제공되는 **상태 유지형(stateful) 오프라인 Python 코드 인터프리터**입니다.
 사내망 및 폐쇄망 환경의 LLM(AnythingLLM 에이전트 등)이 수학 계산, 데이터 분석, 차트 시각화, 문서 파싱 등을 수행할 수 있도록 실제 Python 코드를 실행하는 환경을 제공합니다. **외부 인터넷 연결이나 추가적인 `pip install` 없이도**, 사전에 패키징된 포터블 Python 배포판을 기반으로 안정적으로 동작합니다.
@@ -136,6 +136,9 @@ powershell -ExecutionPolicy Bypass -File .\install_offline.ps1 -Python "C:\path\
 | `SANDBOX_MAX_WRITE_BYTES` | `1048576` | `write_workspace_file`·`append_workspace_file` 도구의 1회 쓰기 최대 크기(바이트)입니다(0으로 설정 시 무제한). |
 | `SANDBOX_NS_IDLE_TIMEOUT` | `1800` | 사용되지 않는 유휴 네임스페이스 커널을 자동 회수하기까지의 대기 시간(초)입니다. |
 | `SANDBOX_MAX_NAMESPACES` | `8` | 동시에 유지할 수 있는 네임스페이스 커널의 최대 개수입니다(초과 시 LRU 알고리즘으로 회수). |
+| `SANDBOX_INLINE_IMAGES` | 미설정 | 켜면(`1`) `execute_python_code`·`run_python_file` 이 새로 만든 png·jpg·gif·webp 를 Markdown 링크와 함께 MCP `ImageContent` 로도 돌려줍니다. 결과를 글로 뭉개는 호스트에서는 BASE64 가 컨텍스트로 쏟아지므로 기본은 꺼져 있습니다. |
+| `SANDBOX_INLINE_IMAGE_MAX_COUNT` | `4` | 한 번의 실행에서 돌려줄 그림의 최대 개수입니다. |
+| `SANDBOX_INLINE_IMAGE_MAX_BYTES` | `5242880` | 돌려줄 그림 한 장의 최대 크기(바이트)입니다. 넘으면 링크만 남습니다. |
 | `SANDBOX_LAZY_START` | 미설정 | 설정할 경우(truthy), 서버 시작 시점에 예열용 커널을 미리 구동하지 않고 첫 요청 시 구동합니다. |
 | `SANDBOX_PIP_INDEX_URL` | 미설정 | **사내 PyPI 미러 서버 주소**입니다(예: `http://pypi.사내/simple`). 설정하지 않으면 기본 pip 설정(pip.ini)이나 외부 공식 PyPI에 접근하게 되어 폐쇄망 환경에서는 패키지 설치가 실패합니다. |
 | `SANDBOX_PIP_TRUSTED_HOST` | 미설정 | 사내 미러 서버가 평문 HTTP이거나 자체 사설 CA 인증서를 사용할 때 지정하는 신뢰 호스트명입니다. 누락 시 pip가 해당 인덱스를 **보안 문제로 무시**합니다. |
@@ -265,7 +268,8 @@ Next: run it with run_python_file(file_path="data_pipeline.py", namespace=<your 
 
 | 버전 | 변경 내용 |
 |------|-----------|
-| **v0.8.0** | `append_workspace_file` 도구 추가: 응답 한 번의 출력 한도보다 긴 파일을 쌓을 수 있도록, 첫 부분은 `write_workspace_file`로 쓰고 나머지는 조각 단위로 파일 끝에 덧붙이는 도구를 추가했습니다. 내용은 받은 그대로 붙이며(조각 사이에 아무것도 넣지 않음) 파일이 없으면 새로 만듭니다. 응답에 파일 끝 8줄을 줄 번호와 함께 돌려주어 다음 조각을 이어 쓸 위치를 확인할 수 있습니다. 경로 제한과 크기 상한은 저장 도구와 같고 빈 내용은 거부합니다. 저장 도구에 인자를 더하지 않고 별도 도구로 둔 이유는 ADR-022에 정리했습니다. |
+| **v0.9.0** | 호스트가 요청하면 새로 만든 그림을 MCP ImageContent 로도 돌려줍니다 (SANDBOX_INLINE_IMAGES, 기본 꺼짐). 이미지를 볼 수 있는 모델이 자기가 그린 차트를 직접 확인할 수 있습니다. |
+| v0.8.0 | `append_workspace_file` 도구 추가: 응답 한 번의 출력 한도보다 긴 파일을 쌓을 수 있도록, 첫 부분은 `write_workspace_file`로 쓰고 나머지는 조각 단위로 파일 끝에 덧붙이는 도구를 추가했습니다. 내용은 받은 그대로 붙이며(조각 사이에 아무것도 넣지 않음) 파일이 없으면 새로 만듭니다. 응답에 파일 끝 8줄을 줄 번호와 함께 돌려주어 다음 조각을 이어 쓸 위치를 확인할 수 있습니다. 경로 제한과 크기 상한은 저장 도구와 같고 빈 내용은 거부합니다. 저장 도구에 인자를 더하지 않고 별도 도구로 둔 이유는 ADR-022에 정리했습니다. |
 | v0.7.0 | MCP 클라이언트 타임아웃 대응: 패키지 설치 작업을 백그라운드 스레드로 분리하고, 도구가 `SANDBOX_TOOL_BUDGET`(45초) 내에 `RUNNING` 상태로 즉시 응답하도록 개선했습니다. 격리 가상환경(venv)을 서버 시작 시 사전 생성하도록 최적화하였으며, `SANDBOX_EXEC_TIMEOUT` 기본값을 기존 60초에서 45초로 단축했습니다. |
 | v0.6.0 | `install_python_packages` 도구 추가: 사내 PyPI 미러를 통해 별도 격리 가상환경(venv)에 패키지를 설치하는 기능을 도입했습니다. 커널이 직접 import를 수행하여 정상 설치 여부를 교차 검증하며, 미러 미설정·네트워크 단절·평문 HTTP 무시 등 실패 원인을 정밀하게 구분하여 안내합니다. |
 | v0.5.0 | 코드 실행 판정 체계 전면 개편: 모델의 착각을 유발하는 모호한 'SUCCESS' 판정을 제거했습니다. 명시적 예외 없이 실패하는 케이스(백그라운드 스레드 크래시, 서브프로세스 비정상 종료, 삼켜진 트레이스백 등)의 탐지 로직을 추가하고, `sys.exit(0)` 오판 수정 및 `run_python_file` 실행 후 커널 상태 보존 처리를 적용했습니다. |

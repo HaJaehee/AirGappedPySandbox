@@ -391,6 +391,105 @@ def check_response_shape():
           out.splitlines()[-1].startswith("next_action:"))
 
 
+def check_inline_images():
+    """New raster images reach the host as ImageContent only when it opted in."""
+    try:
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] inline image checks (server import failed: {exc})")
+        return
+    import asyncio
+    import subprocess
+    import tempfile
+    from artifacts import Artifact
+    from kernel_manager import POOL
+
+    def flag_for(value):
+        env = {k: v for k, v in os.environ.items() if k != "SANDBOX_INLINE_IMAGES"}
+        if value is not None:
+            env["SANDBOX_INLINE_IMAGES"] = value
+        done = subprocess.run(
+            [sys.executable, "-c", "import config; print(config.INLINE_IMAGES)"],
+            cwd=config.PROJECT_ROOT, env=env, capture_output=True, text=True, timeout=60)
+        return done.stdout.strip()
+
+    # Off unless asked: a host that flattens results to text would get the base64.
+    check("inline: off when SANDBOX_INLINE_IMAGES is unset", flag_for(None) == "False")
+    check("inline: off when SANDBOX_INLINE_IMAGES=0", flag_for("0") == "False")
+    check("inline: on when SANDBOX_INLINE_IMAGES=1", flag_for("1") == "True")
+
+    def shape(result):
+        return "text" if isinstance(result, str) else [type(item).__name__ for item in result]
+
+    def blocks_of(call_result):
+        # The SDK returns (content, structured) once a tool has an output schema.
+        return call_result[0] if isinstance(call_result, tuple) else call_result
+
+    ws = config.ensure_workspace()
+    chart = ws / "_smoke_inline.png"
+    script = ws / "_smoke_inline.py"
+    draw = (
+        "import matplotlib.pyplot as plt\n"
+        "plt.plot([1,2,3],[3,1,2]); plt.savefig('_smoke_inline.png'); plt.close()\n"
+        "print('saved')\n"
+    )
+    script.write_text(draw, encoding="utf-8")
+    folder = Path(tempfile.mkdtemp(prefix="sandbox-inline-"))
+    original = (config.INLINE_IMAGES, config.INLINE_IMAGE_MAX_COUNT, config.INLINE_IMAGE_MAX_BYTES)
+
+    def art(name, data=b"x"):
+        path = folder / name
+        path.write_bytes(data)
+        return Artifact(path=path, rel_path=name, size=len(data), is_image=True)
+
+    try:
+        config.INLINE_IMAGES = False
+        out = server.execute_python_code(draw, namespace="_smoke_inline")
+        check("inline: off returns text with the link",
+              shape(out) == "text" and "![_smoke_inline.png](" in out, shape(out))
+        chart.unlink(missing_ok=True)
+
+        config.INLINE_IMAGES = True
+        out = server.execute_python_code(draw, namespace="_smoke_inline")
+        check("inline: execute_python_code adds the image", shape(out) == ["str", "Image"], shape(out))
+        if shape(out) == ["str", "Image"]:
+            check("inline: the text keeps verdict and link",
+                  out[0].startswith("execution_status:") and "![_smoke_inline.png](" in out[0])
+            check("inline: png mime type", out[1].to_image_content().mimeType == "image/png")
+
+        out = server.execute_python_code("print('no new file')", namespace="_smoke_inline")
+        check("inline: no new image stays text", shape(out) == "text", shape(out))
+
+        chart.unlink(missing_ok=True)
+        out = server.run_python_file("_smoke_inline.py", namespace="_smoke_inline")
+        check("inline: run_python_file adds the image", shape(out) == ["str", "Image"], shape(out))
+
+        # What the host receives once the SDK has turned the result into content blocks.
+        chart.unlink(missing_ok=True)
+        blocks = blocks_of(asyncio.run(server.mcp.call_tool(
+            "execute_python_code", {"code": draw, "namespace": "_smoke_inline"})))
+        check("inline: MCP result is text then ImageContent",
+              [block.type for block in blocks] == ["text", "image"], [block.type for block in blocks])
+
+        config.INLINE_IMAGE_MAX_COUNT = 2
+        config.INLINE_IMAGE_MAX_BYTES = 10
+        check("inline: vector image stays a link", shape(server._with_images("t", [art("a.svg")])) == "text")
+        check("inline: oversized image stays a link",
+              shape(server._with_images("t", [art("a.png", b"x" * 11)])) == "text")
+        gone = Artifact(path=folder / "gone.png", rel_path="gone.png", size=1, is_image=True)
+        check("inline: unreadable image stays a link", shape(server._with_images("t", [gone])) == "text")
+        capped = server._with_images("t", [art("a.png"), art("b.jpg"), art("c.webp")])
+        check("inline: image count is capped", shape(capped) == ["str", "Image", "Image"], shape(capped))
+        if shape(capped) == ["str", "Image", "Image"]:
+            check("inline: .jpg is sent as image/jpeg", capped[2].to_image_content().mimeType == "image/jpeg")
+    finally:
+        config.INLINE_IMAGES, config.INLINE_IMAGE_MAX_COUNT, config.INLINE_IMAGE_MAX_BYTES = original
+        chart.unlink(missing_ok=True)
+        script.unlink(missing_ok=True)
+        shutil.rmtree(folder, ignore_errors=True)
+        POOL.shutdown_all()
+
+
 def check_pip_installer():
     """Package installs, and -- the point of the feature -- honest failures.
 
@@ -675,6 +774,9 @@ def main():
     # 15. answering inside the MCP client's timeout.
     check_busy_kernel_is_not_waited_for()
     check_install_budget()
+
+    # 16. new images as ImageContent, only for a host that asked for them.
+    check_inline_images()
     print()
     if check.failed:
         print(f"{check.failed} check(s) FAILED")
