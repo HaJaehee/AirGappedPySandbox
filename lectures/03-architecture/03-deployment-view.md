@@ -142,7 +142,7 @@ flowchart LR
 
 ### 4.2 외부 빌드 PC에서의 작업 수칙
 
-**첫째, 대상 OS 플랫폼 아키텍처를 완벽히 일치시켜야 합니다.** 빌드를 수행하는 머신의 운영체제 버전, CPU 아키텍처 비트 수(64비트), 그리고 Python의 마이너 버전이 실제 사용자 PC와 정확히 일치해야 합니다. numpy, scipy, PyMuPDF와 같이 C/C++ 네이티브 바이너리를 내장한 패키지들은 플랫폼마다 바이너리 형식이 엄격히 다릅니다. 이 규격이 맞지 않으면 폐쇄망 PC에서 실행 시 "지원되지 않는 휠 플랫폼" 오류를 내며 정상 작동하지 않습니다.
+**첫째, 대상 OS 플랫폼 아키텍처를 완벽히 일치시켜야 합니다.** 빌드를 수행하는 머신의 운영체제 버전, CPU 아키텍처 비트 수(64비트), 그리고 Python의 마이너 버전이 실제 사용자 PC와 정확히 일치해야 합니다. numpy, scipy, lxml과 같이 C/C++ 네이티브 바이너리를 내장한 패키지들은 플랫폼마다 바이너리 형식이 엄격히 다릅니다. 이 규격이 맞지 않으면 폐쇄망 PC에서 실행 시 "지원되지 않는 휠 플랫폼" 오류를 내며 정상 작동하지 않습니다.
 
 **둘째, 두 가지 종속성 요구 목록을 포터블 런타임에 빠짐없이 설치합니다.** `requirements-kernel.txt`에 명시된 약 30종의 데이터 분석 패키지와 `requirements-server.txt`에 명시된 서버 핵심 모듈들을 동일한 포터블 Python 환경에 일괄 설치합니다. 이렇게 두 환경을 단일 런타임에 통합 설치해 두면 서버와 커널이 동일한 인터프리터를 공유하게 되므로 폐쇄망 현장에서 별도의 복잡한 경로 설정 작업이 필요 없습니다.
 
@@ -221,8 +221,8 @@ AnythingLLM의 MCP 서버 설정 파일(`desktop_mcp_servers.json`) 또는 GUI �
 | `SANDBOX_MAX_WRITE_BYTES` | 1,048,576바이트 (1MB) | 파일 저장 도구(`write_workspace_file`)로 한 번에 디스크에 기록할 수 있는 최대 파일 크기입니다. |
 | `SANDBOX_MAX_NAMESPACES` | 8개 | 시스템 전체에서 메모리에 동시에 유지할 수 있는 최대 활성 세션 네임스페이스 커널의 개수입니다. |
 | `SANDBOX_MAX_PACKAGES_PER_CALL` | 20개 | 단일 설치 도구 호출에서 한 번에 요청할 수 있는 최대 패키지 목록의 개수입니다. |
-| `SANDBOX_KERNEL_MEMORY_LIMIT` | 물리 메모리 25% | `SANDBOX_ISOLATION=limits` 일 때 커널 하나(자식 포함)의 메모리 상한입니다. MB 정수 또는 `N%` 로 적습니다. 비율은 numpy import 하한(512 MB + 스레드당 64 MB) 아래로 내려가지 않습니다. |
-| `SANDBOX_KERNEL_MAX_PROCESSES` | 32개 | `SANDBOX_ISOLATION=limits` 일 때 커널 하나가 동시에 가질 수 있는 프로세스 수입니다(Windows 만). |
+| `SANDBOX_KERNEL_MEMORY_LIMIT` | 물리 메모리의 25% | `SANDBOX_ISOLATION=limits` 설정 시 커널 하나(자식 프로세스 포함)에 적용되는 최대 메모리 상한입니다. MB 단위 정수 또는 `N%` 비율로 지정합니다. 비율로 지정하더라도 numpy import에 필요한 최소 하한선(512MB + 스레드당 64MB) 미만으로는 내려가지 않습니다. |
+| `SANDBOX_KERNEL_MAX_PROCESSES` | 32개 | `SANDBOX_ISOLATION=limits` 설정 시 단일 커널이 동시에 생성할 수 있는 최대 프로세스 수입니다 (Windows 환경 전용). |
 | `SANDBOX_PIP_RETRIES` | 0회 | 사내 미러 연결 실패 시 pip의 재시도 횟수입니다. (불필요한 타임아웃 누적을 막기 위해 0으로 고정) |
 
 **동작 모드 설정**
@@ -230,7 +230,7 @@ AnythingLLM의 MCP 서버 설정 파일(`desktop_mcp_servers.json`) 또는 GUI �
 | 환경 변수명 | 기본 적용값 | 설정의 의미와 역할 |
 |---|---|---|
 | `SANDBOX_LAZY_START` | 미설정 (false) | `true`로 설정할 경우 서버 최초 기동 시 예비 커널 부팅과 venv 사전 생성을 건너뛰고 첫 요청 시 지연 생성합니다. |
-| `SANDBOX_ISOLATION` | `off` | `limits` 로 두면 커널마다 OS 자원 상한을 겁니다 (6장, [ADR-023](../adr/adr-023-kernel-resource-limits.md)). |
+| `SANDBOX_ISOLATION` | `off` | `limits`로 설정할 경우 각 커널에 OS 자원 상한을 적용합니다 (6절, [ADR-023](../adr/adr-023-kernel-resource-limits.md) 참조). |
 | `SANDBOX_PIP_INDEX_URL` | 미설정 | 사내 PyPI 미러 서버의 패키지 인덱스 엔드포인트 URL입니다. |
 | `SANDBOX_PIP_TRUSTED_HOST` | 미설정 | 사내 미러 서버가 비보안 HTTP 주소를 사용할 경우 SSL 검증을 우회하기 위한 호스트 도메인 명칭입니다. |
 
@@ -258,9 +258,9 @@ AnythingLLM의 MCP 서버 설정 파일(`desktop_mcp_servers.json`) 또는 GUI �
 | 실행 코드가 외부 공용 인터넷으로 데이터를 유출 | 완벽히 차단됨 | 소프트웨어 샌드박스가 막는 것이 아니라, 대상 PC가 위치한 물리적 사내 폐쇄망 인프라 자체가 외부 연결을 100% 원천 차단합니다. |
 | 무한 루프나 멈춘 코드가 시스템 프로세스를 영구 점유 | 완벽히 차단됨 | 엄격한 시간 예산 감시, 인터럽트 신호 전송, 그리고 프로세스 강제 종료(Kill) 및 재기동 메커니즘을 통해 완벽히 방어합니다. |
 | 대량 출력 폭주로 인한 LLM 컨텍스트 윈도우 오염 | 완벽히 차단됨 | `SANDBOX_MAX_STREAM_CHARS` 상한 필터를 통해 초과된 출력 문자열을 안전하게 축약(Truncate)합니다. |
-| 메모리 폭주·자식 프로세스 대량 생성·스레드 안의 무한 루프로 호스트 PC 마비 | `SANDBOX_ISOLATION=limits` 일 때 차단됨 (기본 꺼짐) | 커널마다 OS 자원 상한을 겁니다. Windows 는 Job Object 로 메모리, 프로세스 수, 낮은 우선순위, 자식 정리를 적용하고, Linux 는 `RLIMIT_DATA` 와 nice 10 을 적용합니다. 상한은 커널 단위이므로 전체 사용량은 커널 수 상한과 함께 정해야 합니다([ADR-023](../adr/adr-023-kernel-resource-limits.md)). |
+| 메모리 폭주·자식 프로세스 대량 생성·스레드 안의 무한 루프로 호스트 PC 마비 | `SANDBOX_ISOLATION=limits` 설정 시 차단됨 (기본값: off) | 각 커널에 OS 자원 상한을 적용합니다. Windows에서는 Job Object를 통해 메모리, 프로세스 수, 낮은 CPU 우선순위, 자식 프로세스 자동 정리를 적용하고, Linux에서는 `RLIMIT_DATA`와 nice 10을 적용합니다. 상한은 커널 단위로 적용되므로, 전체 시스템의 자원 소비량은 최대 커널 수 상한(`SANDBOX_MAX_NAMESPACES`)과 함께 종합적으로 산정해야 합니다([ADR-023](../adr/adr-023-kernel-resource-limits.md)). |
 
-만약 사내망 내부 접근까지 철저히 격리하는 시스템 수준의 강력한 보안 샌드박스가 필요하다면, 서버 전체를 네트워크 네임스페이스가 격리된 Docker 컨테이너나 권한이 제한된 별도의 전용 서비스 OS 계정 환경에서 실행해야 합니다. 그러나 이는 모두 호스트 머신에 대한 '관리자 권한'을 전제로 요구하므로, 일반 업무용 PC 환경을 기반으로 한 본 프로젝트의 초기 현실적 제약 조건 하에서는 수용할 수 없었던 트레이드오프였습니다([ADR-008](../adr/adr-008-conventional-sandbox-timeouts.md)). 관리자 권한 없이 가능한 부분, 즉 커널의 자원 상한만은 v0.10.0 에서 선택 옵션으로 추가했습니다([ADR-023](../adr/adr-023-kernel-resource-limits.md)).
+만약 사내망 내부 접근까지 철저히 격리하는 시스템 수준의 강력한 보안 샌드박스가 필요하다면, 서버 전체를 네트워크 네임스페이스가 격리된 Docker 컨테이너나 권한이 제한된 별도의 전용 서비스 OS 계정 환경에서 실행해야 합니다. 그러나 이는 모두 호스트 머신에 대한 '관리자 권한'을 전제로 요구하므로, 일반 업무용 PC 환경을 기반으로 한 본 프로젝트의 초기 현실적 제약 조건 하에서는 수용할 수 없었던 트레이드오프였습니다([ADR-008](../adr/adr-008-conventional-sandbox-timeouts.md)). 다만 관리자 권한 없이도 적용 가능한 최소한의 안전장치인 커널별 OS 자원 상한 기능은 v0.10.0에서 선택 옵션으로 새롭게 추가되었습니다([ADR-023](../adr/adr-023-kernel-resource-limits.md)).
 
 ## 7. 배포 이후의 일상 유지보수 가이드
 
