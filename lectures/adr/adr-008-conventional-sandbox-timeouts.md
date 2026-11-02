@@ -4,7 +4,9 @@
 
 채택됨 (Accepted) · 2026-07-23, v0.1.0 (v0.7.0에서 단일 실행 제한 기본값을 60초에서 45초로 하향 조정)
 
-관련 결정: [ADR-001](adr-001-local-mcp-server.md), [ADR-002](adr-002-persistent-jupyter-kernel.md), [ADR-021](adr-021-tool-time-budget.md)
+v0.10.0 에서 [ADR-023](adr-023-kernel-resource-limits.md)이 보완했습니다. 시간 제한이 막지 못하는 메모리·프로세스·CPU 폭주는 커널마다 거는 OS 자원 상한(선택 옵션)으로 막습니다. 관리자 권한 없이 가능합니다. 파일·네트워크가 관례적 수준이라는 이 문서의 결정은 그대로입니다.
+
+관련 결정: [ADR-001](adr-001-local-mcp-server.md), [ADR-002](adr-002-persistent-jupyter-kernel.md), [ADR-021](adr-021-tool-time-budget.md), [ADR-023](adr-023-kernel-resource-limits.md)
 
 ## 맥락 (Context)
 

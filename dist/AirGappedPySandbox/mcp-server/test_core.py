@@ -391,6 +391,149 @@ def check_response_shape():
           out.splitlines()[-1].startswith("next_action:"))
 
 
+def _pid_alive(pid):
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.OpenProcess.restype = ctypes.c_void_p
+        handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        k32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
+        k32.CloseHandle(ctypes.c_void_p(handle))
+        return code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def check_kernel_death():
+    """A kernel that dies mid-cell is reported at once, not after the time limit."""
+    from kernel_manager import StatefulKernel
+
+    kernel = StatefulKernel()
+    kernel.start()
+    try:
+        t0 = time.monotonic()
+        r = kernel.execute("import os; os._exit(3)", timeout=40)
+        elapsed = time.monotonic() - t0
+        check("death: reported as FAILED, not TIMEOUT", r.status == "FAILED", r.status)
+        check("death: well before the time limit", elapsed < 20, f"{elapsed:.1f}s")
+        check("death: state reset flagged", r.state_reset)
+        # MADO's kernel replay keys on this exact phrase (turns._KERNEL_LOST_MARKS).
+        check("death: says the kernel had to be restarted",
+              "The kernel had to be restarted" in r.stderr, r.stderr[-300:])
+        check("death: exit code reported", "exit code 3" in r.stderr, r.stderr[-300:])
+        r = kernel.execute("print('alive after death')")
+        check("death: next call gets a working kernel", "alive after death" in r.stdout)
+    finally:
+        kernel.shutdown()
+
+    try:
+        import server
+    except ImportError as exc:
+        print(f"[SKIP] death verdict check (server import failed: {exc})")
+        return
+
+    class _Died:
+        stdout = ""
+        stderr = "[sandbox] The kernel process died ..."
+        status = "FAILED"
+        result_repr = ""
+        error_name = "KernelDied"
+        state_reset = True
+        exit_code = None
+        signals: list = []
+
+    out = server._render("ns-test", "provided", _Died(), [])
+    check("death: verdict says the variables are gone", "variables are gone" in out)
+
+
+def check_isolation_settings():
+    """How SANDBOX_ISOLATION and SANDBOX_KERNEL_MEMORY_LIMIT are read (pure)."""
+    import isolation
+
+    floor = isolation.memory_floor_mb()
+    check("isolation: off by default", isolation._resolve_level("off") == ("off", []))
+    level, notes = isolation._resolve_level("strict")
+    check("isolation: an unknown level errs towards limits", level == "limits" and notes)
+    check("isolation: MB is taken as written", isolation._resolve_memory("4096") == (4096, []))
+    mb, notes = isolation._resolve_memory("100")
+    check("isolation: a tiny MB value is kept but warned about", mb == 100 and notes)
+    mb, _ = isolation._resolve_memory("1%")
+    check("isolation: a share never drops below the numpy floor", mb is not None and mb >= floor, mb)
+    mb, _ = isolation._resolve_memory("")
+    check("isolation: default is a share of the RAM", mb is not None and mb >= floor, mb)
+    check("isolation: 0 lifts the memory limit", isolation._resolve_memory("0") == (None, []))
+    mb, notes = isolation._resolve_memory("lots")
+    check("isolation: garbage falls back to the default", mb is not None and notes)
+
+
+def check_isolation_limits():
+    """SANDBOX_ISOLATION=limits: what the OS actually holds a kernel to (ADR-023).
+
+    Patches the module's resolved settings rather than the environment, so this
+    runs in the same process as every other check.
+    """
+    import isolation
+    from check_environment import check_isolation
+    from kernel_manager import StatefulKernel
+
+    if not isolation.supported():
+        print(f"[SKIP] OS limit checks (none for {sys.platform})")
+        return
+    saved = (isolation.ACTIVE, isolation.MEMORY_MB, isolation.MAX_PROCESSES)
+    isolation.ACTIVE = True
+    isolation.MEMORY_MB = isolation.memory_floor_mb() + 512
+    isolation.MAX_PROCESSES = 8
+    kernel = StatefulKernel()
+    try:
+        kernel.start()
+        check("limits: kernel is held to them", check_isolation(kernel) == [])
+
+        kernel.execute("_keep = 'still here'")
+        r = kernel.execute(f"_blob = bytearray({isolation.MEMORY_MB * 2} * 1024 * 1024)")
+        check("limits: too much memory is a MemoryError", r.error_name == "MemoryError",
+              f"{r.status} {r.error_name}")
+        r = kernel.execute("print(_keep)")
+        check("limits: the kernel and its variables survive it", "still here" in r.stdout)
+        r = kernel.execute("import numpy; print(int(numpy.ones((300, 300)).sum()))")
+        check("limits: numpy still imports under the default floor", "90000" in r.stdout,
+              r.stderr[-300:])
+
+        r = kernel.execute(
+            "import subprocess, sys\n"
+            "_py = getattr(sys, '_base_executable', sys.executable)\n"
+            "_kids = []\n"
+            "try:\n"
+            "    for _ in range(20):\n"
+            "        _kids.append(subprocess.Popen([_py, '-c', 'import time; time.sleep(60)']))\n"
+            "except OSError as exc:\n"
+            "    print('refused after', len(_kids))\n"
+            "print('pids', ' '.join(str(p.pid) for p in _kids))\n"
+        )
+        pids = [int(x) for x in r.stdout.split("pids", 1)[-1].split()] if "pids" in r.stdout else []
+        if os.name == "nt":
+            check("limits: the process count is capped", "refused after" in r.stdout, r.stdout)
+        check("limits: children were started", bool(pids), r.stdout + r.stderr[-300:])
+
+        kernel.restart()
+        deadline = time.monotonic() + 5
+        while any(_pid_alive(p) for p in pids) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        check("limits: a restart takes the kernel's children along",
+              not any(_pid_alive(p) for p in pids))
+        check("limits: the restarted kernel is held to them too", check_isolation(kernel) == [])
+    finally:
+        kernel.shutdown()
+        isolation.ACTIVE, isolation.MEMORY_MB, isolation.MAX_PROCESSES = saved
+
+
 def check_inline_images():
     """New raster images reach the host as ImageContent only when it opted in."""
     try:
@@ -777,6 +920,11 @@ def main():
 
     # 16. new images as ImageContent, only for a host that asked for them.
     check_inline_images()
+
+    # 17. a kernel dying mid-cell, and the optional OS limits (ADR-023).
+    check_kernel_death()
+    check_isolation_settings()
+    check_isolation_limits()
     print()
     if check.failed:
         print(f"{check.failed} check(s) FAILED")

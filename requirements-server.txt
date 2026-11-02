@@ -13,5 +13,6 @@
 #   pip install --no-index --find-links ./offline_wheels -r requirements-server.txt
 
 mcp>=1.2.0,<2
-jupyter_client>=8.0
+# <9: kernel_manager.SandboxKernelManager overrides two private methods (ADR-023).
+jupyter_client>=8.0,<9
 ipykernel>=6.0

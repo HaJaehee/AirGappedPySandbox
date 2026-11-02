@@ -151,6 +151,28 @@ goes. See `03` and lecture ADR-022.
 - **`PyMuPDF` import name is `fitz`** (not `pymupdf`). `check_environment.py`
   probes `fitz`.
 
+## OS resource limits (`SANDBOX_ISOLATION=limits`, ADR-023)
+
+- **Hook the private methods, not `_launch_locked`.** `restart_kernel(now=True)`
+  relaunches through jupyter_client and never calls `_launch_locked`, so
+  `SandboxKernelManager` overrides `_async_launch_kernel` (attach) and
+  `_async_cleanup_resources` (release) — every start, restart and shutdown passes
+  them. That is private API: `requirements-server.txt` pins `jupyter_client<9`;
+  re-check both methods before lifting the pin.
+- **A venv `python.exe` is a launcher.** It starts the real interpreter within
+  milliseconds, so the kernel is created `CREATE_SUSPENDED`, put in its Job and
+  only then resumed; assigning after a plain start can leave the real kernel
+  outside the Job. It also counts as two processes against the process limit.
+- **`import numpy` needs about 1.2 GB on a 20-thread machine** before any data:
+  OpenBLAS reserves per-thread buffers (Windows commit charge, Linux
+  `RLIMIT_DATA` alike) and *aborts the process* when it cannot. Hence the floor
+  of 512 MB + 64 MB per thread under a share-of-RAM limit.
+- **A dead kernel is reported at once.** `_execute_locked` checks `is_alive()` on
+  every empty iopub poll; the message keeps the phrase "The kernel had to be
+  restarted", which MADO matches to know variables were lost.
+- **Nested Jobs work.** A server that already runs inside a Job (terminals,
+  IDEs, Claude Code do this) can still put each kernel in its own Job (Windows 8+).
+
 ## The C:/D: path trap (important!)
 
 Early in development the working dir resolved as

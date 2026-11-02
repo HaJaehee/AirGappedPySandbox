@@ -79,3 +79,9 @@ execution timeout with auto-recovery, an output-size cap
 (`SANDBOX_MAX_STREAM_CHARS`), path-escape rejection in `run_python_file`, and the
 air-gap itself. For stronger isolation, run the server in a container or a
 restricted OS user. See `07` for details.
+
+Optional OS resource limits (`SANDBOX_ISOLATION=limits`, v0.10.0, off by
+default) hold each kernel to a memory ceiling, a process count (Windows), a
+lower CPU priority, and end its child processes with it — a Job Object per
+kernel on Windows, `RLIMIT_DATA` + nice on Linux (`isolation.py`). They protect
+the host's availability; they do not confine files or network. Lecture ADR-023.

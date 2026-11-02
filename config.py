@@ -47,7 +47,7 @@ def _env_int(name: str, default: int) -> int:
 
 # Single source of truth for the project version. Keep in sync with the version
 # history table in README.md. The server reports this over MCP (serverInfo).
-VERSION: str = "0.9.0"
+VERSION: str = "0.10.0"
 
 # Project root = directory containing this file. The kernel's working directory
 # is set here so that the "./workspace/..." relative paths used by the LLM
@@ -132,6 +132,19 @@ NS_IDLE_TIMEOUT: int = _env_int("SANDBOX_NS_IDLE_TIMEOUT", 1800)  # seconds
 # Hard cap on simultaneously live namespace kernels; the least-recently-used is
 # evicted when the cap would be exceeded (bounds total memory).
 MAX_NAMESPACES: int = _env_int("SANDBOX_MAX_NAMESPACES", 8)
+
+# --- OS resource limits on each kernel (see isolation.py) -------------------
+# "off" keeps the conventional sandbox of ADR-008. "limits" puts every kernel
+# under an OS ceiling on memory and child processes, at a lower CPU priority, so
+# a runaway cell cannot take the host down with it (ADR-023).
+ISOLATION: str = os.environ.get("SANDBOX_ISOLATION", "off").strip().lower()
+# Memory per kernel, its children included: whole MB ("4096", taken as written)
+# or a share of the physical RAM ("25%", the default when empty), which never
+# drops below what `import numpy` needs. "0" lifts only the memory ceiling.
+KERNEL_MEMORY_LIMIT: str = os.environ.get("SANDBOX_KERNEL_MEMORY_LIMIT", "").strip()
+# Processes one kernel may have alive at once, itself included (Windows only).
+# A venv python.exe counts twice: the launcher plus the real interpreter.
+KERNEL_MAX_PROCESSES: int = _env_int("SANDBOX_KERNEL_MAX_PROCESSES", 32)
 
 # Image extensions rendered as inline Markdown images; everything else becomes a
 # plain Markdown link.

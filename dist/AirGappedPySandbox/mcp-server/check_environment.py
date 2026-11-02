@@ -11,11 +11,14 @@ It exits non-zero if anything required is missing.
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import sys
 import textwrap
 
 import config
+import isolation
 
 # (import_name, human_label). Grouped by capability for a readable report.
 REQUIRED = [
@@ -58,9 +61,58 @@ _PROBE = textwrap.dedent(
 )
 
 
-def probe(python: str, names: list[str]) -> dict[str, bool]:
-    import json
+# Run INSIDE the test kernel: what the OS actually holds it to, seen from there.
+_ISOLATION_PROBE = textwrap.dedent(
+    """
+    import json as _j, os as _o
+    _d = {"pid": _o.getpid()}
+    if _o.name == "nt":
+        import ctypes as _c
+        _k = _c.windll.kernel32
+        _k.GetCurrentProcess.restype = _c.c_void_p
+        _d["priority"] = _k.GetPriorityClass(_c.c_void_p(_k.GetCurrentProcess()))
+    else:
+        import resource as _r
+        _lim = _r.getrlimit(_r.RLIMIT_DATA)[1]
+        _d["data_mb"] = None if _lim == _r.RLIM_INFINITY else _lim // (1024 * 1024)
+        _d["nice"] = _o.getpriority(_o.PRIO_PROCESS, 0)
+    print("ISOLATION" + _j.dumps(_d))
+    """
+)
 
+
+def check_isolation(kernel) -> list[str]:
+    """Confirm a live kernel is held to the limits isolation.summary() promises.
+
+    Returns the problems found; prints one line per check.
+    """
+    out = kernel.execute(_ISOLATION_PROBE).stdout
+    line = next((x for x in out.splitlines() if x.startswith("ISOLATION")), "")
+    if not line:
+        return ["could not read the kernel's own view of its limits"]
+    seen = json.loads(line[len("ISOLATION"):])
+    problems: list[str] = []
+
+    def report(ok: bool, text: str) -> None:
+        print(f"  [{'OK ' if ok else 'FAIL'}] {text}")
+        if not ok:
+            problems.append(text)
+
+    if os.name == "nt":
+        pids = isolation.job_pids(kernel._km._limits)
+        report(seen["pid"] in pids, f"kernel process {seen['pid']} is inside its Job Object")
+        report(seen.get("priority") == 0x4000, "kernel runs at below-normal priority")
+    elif sys.platform.startswith("linux"):
+        if isolation.MEMORY_MB:
+            report(seen.get("data_mb") == isolation.MEMORY_MB,
+                   f"RLIMIT_DATA is {seen.get('data_mb')} MB (expected {isolation.MEMORY_MB})")
+        report(seen.get("nice", 0) >= 10, f"kernel niceness is {seen.get('nice')} (expected >= 10)")
+    else:
+        report(False, f"no OS limits are implemented for {sys.platform}")
+    return problems
+
+
+def probe(python: str, names: list[str]) -> dict[str, bool]:
     out = subprocess.run(
         [python, "-c", _PROBE, json.dumps(names)],
         capture_output=True,
@@ -129,6 +181,9 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 - never fail the pre-flight on this
         print(f"  [WARN] could not check the mirror: {exc}")
 
+    print("\nOS limits on kernels (SANDBOX_ISOLATION):")
+    print(f"  {isolation.summary()}")
+
     print()
     if missing_required:
         print("RESULT: FAIL -- missing required packages: " + ", ".join(missing_required))
@@ -144,12 +199,16 @@ def main() -> int:
 
         KERNEL.start()
         r = KERNEL.execute("print('kernel-ok')")
+        limit_problems = check_isolation(KERNEL) if isolation.ACTIVE else []
         KERNEL.shutdown()
-        if "kernel-ok" in r.stdout:
-            print("RESULT: PASS -- environment is ready.")
-            return 0
-        print(f"RESULT: FAIL -- kernel ran but returned unexpected output: {r.stdout!r}")
-        return 1
+        if "kernel-ok" not in r.stdout:
+            print(f"RESULT: FAIL -- kernel ran but returned unexpected output: {r.stdout!r}")
+            return 1
+        if limit_problems:
+            print("RESULT: FAIL -- the kernel is not held to the OS limits: " + "; ".join(limit_problems))
+            return 1
+        print("RESULT: PASS -- environment is ready.")
+        return 0
     except Exception as exc:  # noqa: BLE001
         print(f"RESULT: FAIL -- could not launch kernel: {exc}")
         return 1

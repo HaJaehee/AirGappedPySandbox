@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP, Image
 
 import config
+import isolation
 import pip_installer
 from artifacts import chat_link_path, diff, snapshot
 from kernel_manager import POOL
@@ -173,6 +175,27 @@ def _verdict(code_result, artifacts) -> tuple[str, str, str]:
             "The code was interrupted at the time limit and did NOT finish." + lost,
             "Do not report a result. Cut the work down (smaller input, fewer "
             "rows, a narrower loop), add progress print()s, and run again.",
+        )
+
+    if code_result.status == "FAILED" and code_result.error_name == "KernelDied":
+        return (
+            "FAILED",
+            "The kernel process died while running the code, so it did NOT finish. "
+            "The kernel had to be restarted, so variables are gone.",
+            "Do not report a result. Load only what you need again and work in "
+            "smaller pieces (fewer rows, chunks, no huge intermediate copies). "
+            + isolation.memory_hint(),
+        )
+
+    if code_result.status == "FAILED" and code_result.error_name == "MemoryError" \
+            and isolation.memory_hint():
+        return (
+            "FAILED",
+            "The code ran out of memory (MemoryError). Variables from earlier "
+            "calls are still in the kernel.",
+            isolation.memory_hint() + " Do NOT retry the same code: process the "
+            "data in chunks, drop columns or rows you do not need, and del large "
+            "objects you are done with, then call this tool again.",
         )
 
     if code_result.status == "FAILED":
@@ -1009,13 +1032,17 @@ def reset_kernel_state(namespace: str) -> str:
 
 def main() -> None:
     config.ensure_workspace()
+    # Every startup note goes to stderr: stdout is the MCP stdio channel, and a
+    # stray line there reaches the client as a malformed message.
+    _log = sys.stderr
+    print(f"[sandbox] {isolation.summary()}", file=_log, flush=True)
     # Warm one reserve kernel so the first tool call is fast, and so a
     # misconfigured portable Python surfaces at startup rather than mid-chat.
     if os.environ.get("SANDBOX_LAZY_START", "").lower() not in ("1", "true", "yes"):
         try:
             POOL.prewarm()
         except Exception as exc:  # noqa: BLE001 - report and continue lazily
-            print(f"[sandbox] Warning: kernel warm-start failed: {exc}")
+            print(f"[sandbox] Warning: kernel warm-start failed: {exc}", file=_log)
         # Build the package venv now too. Creating it can take tens of seconds
         # on the portable Python, and paying that inside the first
         # install_python_packages call is what pushed it past the client's
@@ -1023,11 +1050,11 @@ def main() -> None:
         try:
             created, err = pip_installer.ensure_venv()
             if err:
-                print(f"[sandbox] Warning: package venv unavailable: {err}")
+                print(f"[sandbox] Warning: package venv unavailable: {err}", file=_log)
             elif created:
-                print(f"[sandbox] Created package venv at {config.VENV_DIR}")
+                print(f"[sandbox] Created package venv at {config.VENV_DIR}", file=_log)
         except Exception as exc:  # noqa: BLE001
-            print(f"[sandbox] Warning: package venv setup failed: {exc}")
+            print(f"[sandbox] Warning: package venv setup failed: {exc}", file=_log)
     try:
         mcp.run()  # stdio transport by default
     finally:

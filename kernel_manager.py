@@ -38,6 +38,7 @@ from jupyter_client.kernelspec import KernelSpec
 from jupyter_client.manager import KernelManager
 
 import config
+import isolation
 import pip_installer
 
 # Matches ANSI colour escapes IPython injects into tracebacks.
@@ -272,6 +273,33 @@ def _stderr_signals(stderr: str) -> list[str]:
     return found
 
 
+class SandboxKernelManager(KernelManager):
+    """KernelManager that holds each kernel process to the OS limits of isolation.py.
+
+    Hooks the two private methods that every start AND restart pass through.
+    ``restart_kernel`` never calls our ``_launch_locked``, so a hook there would
+    have left every restarted kernel unlimited. Private API, hence the
+    ``jupyter_client<9`` pin in requirements-server.txt.
+    """
+
+    _limits = None  # token from isolation.attach(); a Job handle on Windows
+
+    async def _async_launch_kernel(self, kernel_cmd, **kw) -> None:
+        # Children a dead kernel left behind go before its successor starts.
+        isolation.release(self._limits)
+        self._limits = None
+        await super()._async_launch_kernel(kernel_cmd, **kw)
+        self._limits = isolation.attach(self.provisioner.process)
+
+    async def _async_cleanup_resources(self, restart: bool = False) -> None:
+        # Every shutdown and restart ends here, whether or not it had to kill.
+        try:
+            await super()._async_cleanup_resources(restart=restart)
+        finally:
+            isolation.release(self._limits)
+            self._limits = None
+
+
 class StatefulKernel:
     """Thread-safe wrapper around one persistent IPython kernel."""
 
@@ -292,7 +320,7 @@ class StatefulKernel:
             self._run_startup_locked()
 
     def _launch_locked(self) -> None:
-        km = KernelManager()
+        km = SandboxKernelManager()
         # Launch the kernel with the configured interpreter (portable Python).
         spec = KernelSpec(
             argv=[
@@ -317,7 +345,7 @@ class StatefulKernel:
         # writing "./workspace/chart.png" went to the *server's* directory
         # while write_workspace_file, run_python_file, list_workspace_files and
         # the artifact scan all used SANDBOX_WORKSPACE. Files vanished.
-        km.start_kernel(cwd=str(config.ensure_workspace()))
+        km.start_kernel(cwd=str(config.ensure_workspace()), **isolation.launch_kwargs())
         kc = km.client()
         kc.start_channels()
         try:
@@ -421,7 +449,22 @@ class StatefulKernel:
             try:
                 msg = kc.get_iopub_msg(timeout=min(remaining, 1.0))
             except queue.Empty:
-                continue
+                if self._km.is_alive():
+                    continue
+                # The process is gone (out of memory, a native crash, os._exit).
+                # Waiting out the time limit would only report it as a TIMEOUT.
+                process = getattr(self._km.provisioner, "process", None)
+                exit_code = getattr(process, "returncode", None)  # set by is_alive()'s poll
+                self._restart_locked()
+                result.status = "FAILED"
+                result.error_name = "KernelDied"
+                result.state_reset = True
+                stderr_parts.append(
+                    f"\n[sandbox] The kernel process died while running this code "
+                    f"(exit code {exit_code}){isolation.death_hint()}. The kernel had "
+                    "to be restarted; in-memory variables were cleared."
+                )
+                break
             if msg.get("parent_header", {}).get("msg_id") != msg_id:
                 continue  # belongs to a different request
 
